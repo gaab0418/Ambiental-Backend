@@ -10,6 +10,7 @@ class Organization(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(255), nullable=False, index=True)
     slug = Column(String(100), unique=True, nullable=False, index=True)
+    cnpj_cpf = Column(String(20), unique=True, nullable=False, index=True)  # CNPJ ou CPF - chave única
     email = Column(String(255), nullable=False, index=True)
     phone = Column(String(20), nullable=True)
     address = Column(String(500), nullable=True)

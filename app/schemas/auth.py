@@ -25,6 +25,7 @@ class UserRegister(BaseModel):
     full_name: str
     password: str
     organization_name: str
+    cnpj_cpf: str  # CNPJ ou CPF da organização
 
 
 class RefreshTokenRequest(BaseModel):
@@ -44,3 +45,9 @@ class UserResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class UserSelfUpdateRequest(BaseModel):
+    full_name: Optional[str] = None
+    phone: Optional[str] = None
+    password: Optional[str] = None  # Para trocar senha

@@ -47,15 +47,11 @@ def create_refresh_token(data: Dict[str, Any]) -> str:
 def verify_token(token: str, token_type: str = "access") -> Optional[Dict[str, Any]]:
     """Verify and decode JWT token."""
     try:
+        # jwt.decode already validates expiration automatically
         payload = jwt.decode(token, settings.secret_key, algorithms=[settings.algorithm])
         
         # Verify token type
         if payload.get("type") != token_type:
-            return None
-            
-        # Check expiration
-        exp = payload.get("exp")
-        if exp is None or datetime.utcnow() > datetime.fromtimestamp(exp):
             return None
             
         return payload

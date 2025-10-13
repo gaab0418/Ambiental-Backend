@@ -149,3 +149,5 @@ logs/
 *.log
 temp/
 tmp/
+
+*.db

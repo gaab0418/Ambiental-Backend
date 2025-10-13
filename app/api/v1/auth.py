@@ -13,7 +13,7 @@ from app.core.security import (
     verify_password, get_password_hash,
     create_access_token, create_refresh_token, verify_token
 )
-from app.schemas.auth import Token, UserRegister, UserResponse, RefreshTokenRequest
+from app.schemas.auth import Token, UserRegister, UserResponse, RefreshTokenRequest, UserSelfUpdateRequest
 from app.dependencies.auth import get_current_user
 from app.config import settings
 
@@ -93,6 +93,14 @@ async def register_new_organization(
             detail="Email already registered"
         )
     
+    # Check if CNPJ/CPF already exists
+    existing_cnpj = db.query(Organization).filter(Organization.cnpj_cpf == user_data.cnpj_cpf).first()
+    if existing_cnpj:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="CNPJ/CPF already registered"
+        )
+    
     # Check if organization slug already exists
     import re
     slug = re.sub(r'[^a-zA-Z0-9\-]', '', user_data.organization_name.lower().replace(' ', '-'))
@@ -137,6 +145,7 @@ async def register_new_organization(
     organization = Organization(
         name=user_data.organization_name,
         slug=slug,
+        cnpj_cpf=user_data.cnpj_cpf,
         email=user_data.email
     )
     db.add(organization)
@@ -259,4 +268,28 @@ async def get_current_user_info(
     current_user: User = Depends(get_current_user)
 ):
     """Get current user information."""
+    return current_user
+
+
+@router.put("/me", response_model=UserResponse)
+async def update_current_user(
+    user_data: UserSelfUpdateRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Update current user information."""
+    # Update fields
+    if user_data.full_name:
+        current_user.full_name = user_data.full_name
+    
+    if user_data.phone is not None:
+        current_user.phone = user_data.phone
+    
+    if user_data.password:
+        current_user.hashed_password = get_password_hash(user_data.password)
+    
+    current_user.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(current_user)
+    
     return current_user

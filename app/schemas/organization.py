@@ -7,6 +7,7 @@ class OrganizationResponse(BaseModel):
     id: int
     name: str
     slug: str
+    cnpj_cpf: str
     email: str
     phone: Optional[str] = None
     address: Optional[str] = None
@@ -46,3 +47,15 @@ class RoleResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class UserUpdateRequest(BaseModel):
+    full_name: Optional[str] = None
+    phone: Optional[str] = None
+
+
+class OrganizationUpdateRequest(BaseModel):
+    name: Optional[str] = None
+    email: Optional[EmailStr] = None
+    phone: Optional[str] = None
+    address: Optional[str] = None

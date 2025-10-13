@@ -10,7 +10,8 @@ from app.models.license import License, LicenseStatus
 from app.models.subscription import Subscription
 from app.core.security import get_password_hash
 from app.schemas.organization import (
-    OrganizationResponse, UserInviteRequest, UserInviteResponse, RoleResponse
+    OrganizationResponse, UserInviteRequest, UserInviteResponse, RoleResponse,
+    UserUpdateRequest, OrganizationUpdateRequest
 )
 from app.dependencies.auth import require_manager_or_admin
 
@@ -55,7 +56,8 @@ async def get_available_roles(
     db: Session = Depends(get_db)
 ):
     """Get available roles for user assignment."""
-    roles = db.query(Role).filter(Role.is_system == False).all()
+    # Return all roles except SUPER_ADMIN (only super admins can assign that)
+    roles = db.query(Role).filter(Role.name != "SUPER_ADMIN").all()
     return roles
 
 
@@ -232,3 +234,44 @@ async def activate_user(
     db.commit()
     
     return {"message": "User activated successfully"}
+
+
+@router.put("/me", response_model=OrganizationResponse)
+async def update_organization_info(
+    org_data: OrganizationUpdateRequest,
+    current_user: User = Depends(require_manager_or_admin),
+    db: Session = Depends(get_db)
+):
+    """Update organization information."""
+    organization = db.query(Organization).filter(
+        Organization.id == current_user.organization_id
+    ).first()
+    
+    if not organization:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Organization not found"
+        )
+    
+    # Update fields
+    if org_data.name:
+        organization.name = org_data.name
+        # Update slug
+        import re
+        slug = re.sub(r'[^a-zA-Z0-9\-]', '', org_data.name.lower().replace(' ', '-'))
+        organization.slug = slug
+    
+    if org_data.email:
+        organization.email = org_data.email
+    
+    if org_data.phone is not None:
+        organization.phone = org_data.phone
+    
+    if org_data.address is not None:
+        organization.address = org_data.address
+    
+    organization.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(organization)
+    
+    return organization
