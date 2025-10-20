@@ -1,4 +1,4 @@
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 from typing import Optional
@@ -68,7 +68,7 @@ def require_role(required_roles: list[str]):
 
 def require_admin_role(current_user: User = Depends(get_current_active_user)) -> User:
     """Require admin role."""
-    if current_user.role.name not in ["ADMIN", "SUPER_ADMIN"]:
+    if current_user.role.name not in ["ADMIN", "ADMINISTRATOR"]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Admin role required"
@@ -78,7 +78,7 @@ def require_admin_role(current_user: User = Depends(get_current_active_user)) ->
 
 def require_manager_or_admin(current_user: User = Depends(get_current_active_user)) -> User:
     """Require manager or admin role."""
-    if current_user.role.name not in ["ADMIN", "MANAGER", "SUPER_ADMIN"]:
+    if current_user.role.name not in ["ADMIN", "MANAGER", "ADMINISTRATOR"]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Manager or Admin role required"
@@ -87,10 +87,67 @@ def require_manager_or_admin(current_user: User = Depends(get_current_active_use
 
 
 def require_super_admin(current_user: User = Depends(get_current_active_user)) -> User:
-    """Require super admin role."""
-    if current_user.role.name != "SUPER_ADMIN":
+    """Require system administrator role."""
+    if current_user.role.name != "ADMINISTRATOR":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Super Admin role required"
+            detail="System Administrator role required"
+        )
+    return current_user
+
+
+async def get_current_user_optional(request: Request, db: Session = Depends(get_db)) -> Optional[User]:
+    """Get current user if authenticated, otherwise return None."""
+    try:
+        # Extract token from Authorization header
+        authorization = request.headers.get("Authorization")
+        if not authorization or not authorization.startswith("Bearer "):
+            return None
+        
+        token = authorization.split(" ")[1]
+        
+        payload = verify_token(token, "access")
+        if payload is None:
+            return None
+        
+        user_id: str = payload.get("sub")
+        if user_id is None:
+            return None
+        
+        user = db.query(User).filter(User.id == int(user_id)).first()
+        if user is None or not user.is_active:
+            return None
+        
+        return user
+    except Exception:
+        return None
+
+
+def require_consultant(current_user: User = Depends(get_current_active_user)) -> User:
+    """Require consultant role."""
+    if current_user.role.name not in ["CONSULTANT", "ADMINISTRATOR"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Consultant role required"
+        )
+    return current_user
+
+
+def require_manager_or_consultant(current_user: User = Depends(get_current_active_user)) -> User:
+    """Require manager or consultant role."""
+    if current_user.role.name not in ["MANAGER", "CONSULTANT", "ADMINISTRATOR"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Manager or Consultant role required"
+        )
+    return current_user
+
+
+def require_administrator(current_user: User = Depends(get_current_active_user)) -> User:
+    """Require administrator role."""
+    if current_user.role.name != "ADMINISTRATOR":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Administrator role required"
         )
     return current_user

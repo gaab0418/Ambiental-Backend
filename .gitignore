@@ -151,3 +151,4 @@ temp/
 tmp/
 
 *.db
+.cursor/*

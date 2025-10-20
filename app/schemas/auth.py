@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 from typing import Optional
 from datetime import datetime
 
@@ -40,8 +40,15 @@ class UserResponse(BaseModel):
     is_verified: bool
     organization_id: int
     role_id: int
+    profile_image_url: Optional[str] = None
+    phone: Optional[str] = None
+    bio: Optional[str] = None
     created_at: datetime
     last_login_at: Optional[datetime] = None
+    
+    # Related data (optional, populated in responses)
+    role_name: Optional[str] = None
+    organization_name: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -50,4 +57,13 @@ class UserResponse(BaseModel):
 class UserSelfUpdateRequest(BaseModel):
     full_name: Optional[str] = None
     phone: Optional[str] = None
+    bio: Optional[str] = None
     password: Optional[str] = None  # Para trocar senha
+
+
+class UserProfileUpdate(BaseModel):
+    full_name: Optional[str] = Field(None, min_length=1, max_length=255)
+    email: Optional[EmailStr] = None
+    phone: Optional[str] = Field(None, max_length=50)
+    bio: Optional[str] = None
+    profile_image_url: Optional[str] = Field(None, max_length=500)

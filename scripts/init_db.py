@@ -17,14 +17,20 @@ def create_system_roles(db: Session):
     """Create system roles"""
     roles = [
         {
-            "name": "SUPER_ADMIN",
-            "display_name": "Super Administrator",
-            "description": "Full system access",
+            "name": "ADMINISTRATOR",
+            "display_name": "System Administrator",
+            "description": "Full system access and management",
+            "is_system": True
+        },
+        {
+            "name": "CONSULTANT",
+            "display_name": "Consultant",
+            "description": "External consultant with special permissions",
             "is_system": True
         },
         {
             "name": "ADMIN",
-            "display_name": "Administrator",
+            "display_name": "Organization Administrator",
             "description": "Organization administrator",
             "is_system": True
         },
@@ -49,7 +55,7 @@ def create_system_roles(db: Session):
             db.add(role)
     
     db.commit()
-    print("✅ System roles created")
+    print("System roles created")
 
 def create_system_plans(db: Session):
     """Create system plans"""
@@ -99,74 +105,229 @@ def create_system_plans(db: Session):
             db.add(plan)
     
     db.commit()
-    print("✅ System plans created")
+    print("System plans created")
 
-def create_super_admin(db: Session):
-    """Create super admin user"""
-    # Create super admin organization
-    super_org = db.query(Organization).filter(Organization.slug == "ambiental-admin").first()
-    if not super_org:
-        super_org = Organization(
-            name="Ambiental Admin",
-            slug="ambiental-admin",
-            email="admin@ambiental.com",
+def create_demo_plans_and_templates(db: Session):
+    """Create demo plans and templates ONLY - no extra orgs or users"""
+    # Create plans
+    create_system_plans(db)
+    
+    # Create templates
+    # Get the admin user to be the creator
+    admin_user = db.query(User).first()
+    if admin_user:
+        create_sample_templates(db)
+    
+    print("   ✅ Demo plans and templates created")
+
+def create_sample_templates(db: Session):
+    """Create sample document templates"""
+    from app.models.document_template import DocumentTemplate
+    
+    # Get the first admin user to be the creator
+    admin_user = db.query(User).first()
+    if not admin_user:
+        print("Admin user not found for template creation!")
+        return
+    
+    # Template 1: Relatório Ambiental Básico
+    template1 = db.query(DocumentTemplate).filter(DocumentTemplate.name == "Relatório Ambiental Básico").first()
+    if not template1:
+        template1 = DocumentTemplate(
+            name="Relatório Ambiental Básico",
+            description="Template básico para relatórios ambientais",
+            content="""# RELATÓRIO AMBIENTAL
+
+## 1. IDENTIFICAÇÃO DA EMPRESA
+- **Razão Social:** {empresa_nome}
+- **CNPJ:** {cnpj}
+- **Endereço:** {endereco}
+- **Responsável:** {responsavel}
+
+## 2. ATIVIDADES DESENVOLVIDAS
+{descricao_atividades}
+
+## 3. ASPECTOS AMBIENTAIS
+### 3.1 Emissões Atmosféricas
+{emissoes_atmosfericas}
+
+### 3.2 Resíduos Sólidos
+{residuos_solidos}
+
+### 3.3 Efluentes Líquidos
+{efluentes_liquidos}
+
+## 4. CONFORMIDADE LEGAL
+{conformidade_legal}
+
+## 5. MEDIDAS MITIGADORAS
+{medidas_mitigadoras}
+
+## 6. CONCLUSÕES
+{conclusoes}
+
+---
+*Relatório gerado em {data_relatorio}*""",
+            created_by_user_id=admin_user.id,
+            organization_id=None,  # Global template
+            is_global=True,
             is_active=True
         )
-        db.add(super_org)
-        db.commit()
-        db.refresh(super_org)
+        db.add(template1)
     
-    # Get SUPER_ADMIN role
-    super_role = db.query(Role).filter(Role.name == "SUPER_ADMIN").first()
-    
-    # Create super admin user
-    super_user = db.query(User).filter(User.email == "admin@ambiental.com").first()
-    if not super_user:
-        super_user = User(
-            email="admin@ambiental.com",
-            full_name="Super Administrator",
-            hashed_password=get_password_hash("admin123"),
-            organization_id=super_org.id,
-            role_id=super_role.id,
-            is_active=True,
-            is_verified=True
-        )
-        db.add(super_user)
-        db.commit()
-        db.refresh(super_user)
-    
-    print("✅ Super admin user created")
-    print(f"   Email: admin@ambiental.com")
-    print(f"   Password: admin123")
-    print(f"   Organization: {super_org.name}")
+    # Template 2: Licença Ambiental Padrão
+    template2 = db.query(DocumentTemplate).filter(DocumentTemplate.name == "Licença Ambiental Padrão").first()
+    if not template2:
+        template2 = DocumentTemplate(
+            name="Licença Ambiental Padrão",
+            description="Template padrão para licenças ambientais",
+            content="""# LICENÇA AMBIENTAL
 
-def init_database():
-    """Initialize database with basic data"""
-    print("🚀 Initializing Ambiental SaaS Database...")
+**Licença:** {numero_licenca}
+**Órgão Emissor:** {orgao_emissor}
+**Data de Emissão:** {data_emissao}
+**Validade:** {data_validade}
+
+## DADOS DO EMPREENDIMENTO
+- **Razão Social:** {empresa_nome}
+- **CNPJ:** {cnpj}
+- **Endereço:** {endereco}
+- **Atividade:** {atividade}
+
+## CONDIÇÕES DA LICENÇA
+
+### 1. MONITORAMENTO AMBIENTAL
+{condicoes_monitoramento}
+
+### 2. CONTROLE DE EMISSÕES
+{condicoes_emissoes}
+
+### 3. GESTÃO DE RESÍDUOS
+{condicoes_residuos}
+
+### 4. MEDIDAS COMPENSATÓRIAS
+{medidas_compensatorias}
+
+## RESPONSABILIDADES DO EMPREENDEDOR
+{responsabilidades}
+
+## PENALIDADES
+Em caso de descumprimento das condições desta licença, o empreendedor estará sujeito às penalidades previstas na Lei nº 9.605/98.
+
+---
+*Licença válida até {data_validade}*""",
+            created_by_user_id=admin_user.id,
+            organization_id=None,  # Global template
+            is_global=True,
+            is_active=True
+        )
+        db.add(template2)
     
+    db.commit()
+    print("Sample templates created:")
+    print("   - Relatorio Ambiental Basico")
+    print("   - Licenca Ambiental Padrao")
+
+def create_admin_org_and_user(db: Session, admin_email: str, admin_full_name: str, admin_password: str):
+    """Create minimal admin organization and admin user - NO licenses, NO subscriptions."""
+    # Ensure roles exist (ADMINISTRATOR at minimum)
+    create_system_roles(db)
+
+    # Get admin role
+    admin_role = db.query(Role).filter(Role.name == "ADMINISTRATOR").first()
+    if not admin_role:
+        raise ValueError("ADMINISTRATOR role not found after role initialization")
+
+    # Check if admin already exists
+    existing_admin = db.query(User).filter(User.email == admin_email).first()
+    if existing_admin:
+        print(f"Admin user already exists: {admin_email}")
+        return existing_admin.organization, existing_admin
+
+    # Create admin organization (system org)
+    admin_org = Organization(
+        name="Organização Administrativa",
+        slug="org-admin",
+        cnpj_cpf="00.000.000/0001-00",
+        email=admin_email,
+        is_active=True
+    )
+    db.add(admin_org)
+    db.commit()
+    db.refresh(admin_org)
+    print(f"✅ Organização administrativa criada: {admin_org.name}")
+
+    # Create admin user
+    admin_user = User(
+        email=admin_email,
+        full_name=admin_full_name,
+        hashed_password=get_password_hash(admin_password),
+        organization_id=admin_org.id,
+        role_id=admin_role.id,
+        is_active=True,
+        is_verified=True
+    )
+    db.add(admin_user)
+    db.commit()
+    db.refresh(admin_user)
+    print(f"✅ Usuário administrador criado: {admin_email}")
+
+    return admin_org, admin_user
+
+
+def init_database(admin_email: str, admin_full_name: str, admin_password: str, seed_demo: bool = False):
+    """Initialize database with minimal data and optional demo data.
+
+    Minimal seed: roles, ONE admin organization, ONE admin user (NO licenses, NO subscriptions).
+    Demo seed (optional): plans, test org, templates, subscriptions, licenses.
+    """
+    if not admin_email or not admin_full_name or not admin_password:
+        raise ValueError("admin_email, admin_full_name and admin_password are required for initialization")
+
+    print("=" * 60)
+    print("🚀 Initializing Ambiental SaaS Database...")
+    print("=" * 60)
+
     # Create all tables
     from app.models import Base
     Base.metadata.create_all(bind=engine)
     print("✅ Database tables created")
-    
+
     db = SessionLocal()
     try:
-        create_system_roles(db)
-        create_system_plans(db)
-        create_super_admin(db)
+        # Minimal seed - ONLY admin org + admin user
+        print("\n📦 Creating minimal seed data...")
+        admin_org, admin_user = create_admin_org_and_user(db, admin_email, admin_full_name, admin_password)
+
+        # Optional demo data (ONLY plans and templates, NO extra orgs/users)
+        if seed_demo:
+            print("\n📦 Creating demo data (optional)...")
+            create_demo_plans_and_templates(db)
+            print("✅ Demo data created")
+
+        print("\n" + "=" * 60)
+        print("✅ Database initialization completed successfully!")
+        print("=" * 60)
+        print(f"\n📊 Summary:")
         
-        print("\n🎉 Database initialization completed successfully!")
-        print("\n📋 Next steps:")
-        print("1. Update the .env file with your database credentials")
-        print("2. Run: uvicorn app.main:app --reload")
-        print("3. Access the API docs at: http://localhost:8000/docs")
-        print("4. Login with super admin credentials to test the API")
+        org_count = db.query(Organization).count()
+        user_count = db.query(User).count()
         
+        print(f"   • Organizations: {org_count}")
+        print(f"   • Users: {user_count}")
+        print(f"   • Admin: {admin_email}")
+        if seed_demo:
+            print(f"   • Demo data: Plans and templates loaded")
+        else:
+            print(f"   • Demo data: Not loaded")
+        print("=" * 60)
+
     except Exception as e:
         print(f"❌ Error initializing database: {e}")
         db.rollback()
+        raise
     finally:
         db.close()
 
 if __name__ == "__main__":
-    init_database()
+    raise SystemExit("Run initialization via setup.py wizard or import init_database() with proper parameters")

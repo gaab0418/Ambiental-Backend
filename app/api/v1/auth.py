@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from app.database import get_db
 from app.models.user import User
 from app.models.organization import Organization
@@ -13,7 +13,7 @@ from app.core.security import (
     verify_password, get_password_hash,
     create_access_token, create_refresh_token, verify_token
 )
-from app.schemas.auth import Token, UserRegister, UserResponse, RefreshTokenRequest, UserSelfUpdateRequest
+from app.schemas.auth import Token, UserRegister, UserResponse, RefreshTokenRequest, UserSelfUpdateRequest, UserProfileUpdate
 from app.dependencies.auth import get_current_user
 from app.config import settings
 
@@ -51,8 +51,21 @@ async def login_for_access_token(
         )
     
     # Update last login
-    user.last_login_at = datetime.utcnow()
-    db.commit()
+    login_time = datetime.now(timezone.utc)
+    user.last_login_at = login_time
+    try:
+        db.commit()
+        db.refresh(user)
+        # Verify the update
+        if user.last_login_at != login_time:
+            db.rollback()
+            # Try alternative approach
+            db.query(User).filter(User.id == user.id).update({"last_login_at": login_time})
+            db.commit()
+            db.refresh(user)
+    except Exception as e:
+        db.rollback()
+        raise e
     
     # Create tokens
     access_token_expires = timedelta(minutes=settings.access_token_expire_minutes)
@@ -271,6 +284,23 @@ async def get_current_user_info(
     return current_user
 
 
+@router.post("/test-update-login")
+async def test_update_last_login(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Test endpoint to manually update last_login_at."""
+    login_time = datetime.now(timezone.utc)
+    current_user.last_login_at = login_time
+    db.commit()
+    db.refresh(current_user)
+    return {
+        "message": "Last login updated",
+        "user_id": current_user.id,
+        "last_login_at": current_user.last_login_at
+    }
+
+
 @router.put("/me", response_model=UserResponse)
 async def update_current_user(
     user_data: UserSelfUpdateRequest,
@@ -291,5 +321,52 @@ async def update_current_user(
     current_user.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(current_user)
+    
+    return current_user
+
+
+@router.put("/me/profile", response_model=UserResponse)
+async def update_user_profile(
+    profile_data: UserProfileUpdate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Update user profile with extended fields."""
+    from app.utils.audit_logger import AuditLogger
+    
+    # Track changes for audit
+    changes = {}
+    
+    # Update fields
+    if profile_data.full_name is not None:
+        changes["full_name"] = {"old": current_user.full_name, "new": profile_data.full_name}
+        current_user.full_name = profile_data.full_name
+    
+    if profile_data.email is not None:
+        changes["email"] = {"old": current_user.email, "new": profile_data.email}
+        current_user.email = profile_data.email
+    
+    if profile_data.phone is not None:
+        current_user.phone = profile_data.phone
+    
+    if profile_data.bio is not None:
+        current_user.bio = profile_data.bio
+    
+    if profile_data.profile_image_url is not None:
+        current_user.profile_image_url = profile_data.profile_image_url
+    
+    current_user.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(current_user)
+    
+    # Log audit
+    AuditLogger.log_update(
+        db=db,
+        entity_type="User",
+        entity_id=current_user.id,
+        changes=changes,
+        user_id=current_user.id,
+        organization_id=current_user.organization_id
+    )
     
     return current_user

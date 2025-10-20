@@ -61,7 +61,7 @@ pip install --upgrade -r requirements.txt
 
 1. Configure via Setup Wizard
 2. Teste a API em /docs
-3. Faça login com admin@ambiental.com / admin123
+3. Faça login com admin@ambiental.com / Admin@123
 4. Configure sua organização
 5. Desenvolva suas funcionalidades
 

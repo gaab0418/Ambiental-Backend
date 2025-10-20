@@ -9,6 +9,7 @@ import sys
 import json
 import asyncio
 import sqlite3
+import subprocess
 from pathlib import Path
 from typing import Dict, Any, Optional
 from datetime import datetime
@@ -19,6 +20,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 import psycopg2
 from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
+from sqlalchemy import text
 
 # Adiciona o diretório raiz ao path
 sys.path.append(str(Path(__file__).parent))
@@ -36,18 +38,9 @@ class DatabaseConfig(BaseModel):
     username: str
     password: str
 
-class SystemConfig(BaseModel):
-    secret_key: str
-    algorithm: str = "HS256"
-    access_token_expire_minutes: int = 15
-    refresh_token_expire_days: int = 7
-    environment: str = "development"
-    debug: bool = True
-    allowed_origins: list = ["http://localhost:3000", "http://localhost:8080"]
-
-class FullConfig(BaseModel):
+class InitDatabaseRequest(BaseModel):
     database: DatabaseConfig
-    system: SystemConfig
+    seed_demo: bool = False
 
 class ConfigManager:
     """Gerenciador de configurações usando SQLite para armazenamento"""
@@ -162,6 +155,93 @@ ALLOWED_ORIGINS=http://localhost:3000,http://localhost:8080
     with open(env_path, "w", encoding="utf-8") as f:
         f.write(env_content)
 
+def reset_complete_database(db_config: DatabaseConfig, admin_email: str, admin_full_name: str, admin_password: str, seed_demo: bool = False) -> tuple[bool, str]:
+    """Reset completo do banco de dados - remove todas as tabelas e recria tudo"""
+    try:
+        print("Iniciando reset completo do banco de dados...")
+        
+        # Conectar ao banco
+        conn = psycopg2.connect(
+            host=db_config.host,
+            port=db_config.port,
+            database=db_config.database,
+            user=db_config.username,
+            password=db_config.password
+        )
+        
+        with conn.cursor() as cursor:
+            # 1. Remover todas as tabelas do schema public (incluindo alembic_version)
+            cursor.execute("""
+                SELECT tablename FROM pg_tables 
+                WHERE schemaname = 'public'
+            """)
+            tables = [row[0] for row in cursor.fetchall()]
+            
+            if tables:
+                print(f"Removendo {len(tables)} tabelas...")
+                for table in tables:
+                    cursor.execute(f"DROP TABLE IF EXISTS {table} CASCADE")
+                    print(f"   - Tabela '{table}' removida")
+            
+            # 2. Remover sequências também
+            cursor.execute("""
+                SELECT sequencename FROM pg_sequences 
+                WHERE schemaname = 'public'
+            """)
+            sequences = [row[0] for row in cursor.fetchall()]
+            
+            if sequences:
+                print(f"Removendo {len(sequences)} sequências...")
+                for sequence in sequences:
+                    cursor.execute(f"DROP SEQUENCE IF EXISTS {sequence} CASCADE")
+                    print(f"   - Sequência '{sequence}' removida")
+            
+            conn.commit()
+            print("Banco de dados resetado com sucesso!")
+        
+        conn.close()
+        
+        # 3. Atualizar DATABASE_URL no ambiente
+        os.environ["DATABASE_URL"] = f"postgresql://{db_config.username}:{db_config.password}@{db_config.host}:{db_config.port}/{db_config.database}"
+        
+        # 4. Recriar todas as tabelas usando SQLAlchemy
+        print("Recriando tabelas...")
+        Base.metadata.create_all(bind=engine)
+        print("Tabelas recriadas com sucesso!")
+        
+        # 5. Marcar migrations do Alembic como aplicadas (stamp head)
+        print("Sincronizando histórico de migrations...")
+        try:
+            # Usar stamp para marcar que o banco está na versão mais recente
+            result = subprocess.run(
+                ["alembic", "stamp", "head"],
+                cwd=Path(__file__).parent,
+                capture_output=True,
+                text=True,
+                check=True
+            )
+            print("Histórico de migrations sincronizado!")
+        except subprocess.CalledProcessError as e:
+            print(f"Aviso: Erro ao sincronizar migrations: {e}")
+            print("O banco de dados está criado, mas o histórico de migrations pode estar dessincronizado.")
+        except FileNotFoundError:
+            print("Aviso: Alembic não encontrado. Ignorando sincronização de migrations.")
+        
+        # 6. Popular dados iniciais
+        print("Populando dados iniciais...")
+        init_database(
+            admin_email=admin_email,
+            admin_full_name=admin_full_name,
+            admin_password=admin_password,
+            seed_demo=seed_demo
+        )
+        print("Dados iniciais criados com sucesso!")
+        
+        return True, "Banco de dados resetado e inicializado com sucesso!"
+        
+    except Exception as e:
+        return False, f"Erro no reset do banco: {str(e)}"
+
 @app.get("/", response_class=HTMLResponse)
 async def setup_page():
     """Página principal do setup wizard"""
@@ -274,56 +354,35 @@ async def setup_page():
                             <div id="dbTestResult" class="mt-2 text-sm"></div>
                         </div>
 
-                        <!-- System Configuration -->
+                        <!-- Database Options -->
                         <div class="border-b border-gray-200 pb-6">
-                            <h3 class="text-lg font-medium text-gray-900 mb-4">⚙️ Configuração do Sistema</h3>
+                            <h3 class="text-lg font-medium text-gray-900 mb-4">⚙️ Opções de Inicialização</h3>
                             <div class="space-y-4">
-                                <div>
-                                    <label class="block text-sm font-medium text-gray-700 mb-2">Chave Secreta</label>
-                                    <input type="text" id="secretKey" name="secretKey" 
-                                           class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
-                                           placeholder="sua-chave-secreta-super-segura" required>
-                                </div>
-                                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                    <div>
-                                        <label class="block text-sm font-medium text-gray-700 mb-2">Expiração Token (min)</label>
-                                        <input type="number" id="tokenExpire" name="tokenExpire" 
-                                               class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
-                                               value="15" required>
-                                    </div>
-                                    <div>
-                                        <label class="block text-sm font-medium text-gray-700 mb-2">Expiração Refresh (dias)</label>
-                                        <input type="number" id="refreshExpire" name="refreshExpire" 
-                                               class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
-                                               value="7" required>
-                                    </div>
-                                </div>
-                                <div>
-                                    <label class="block text-sm font-medium text-gray-700 mb-2">Ambiente</label>
-                                    <select id="environment" name="environment" 
-                                            class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent">
-                                        <option value="development">Development</option>
-                                        <option value="staging">Staging</option>
-                                        <option value="production">Production</option>
-                                    </select>
-                                </div>
                                 <div class="flex items-center">
-                                    <input type="checkbox" id="debug" name="debug" 
+                                    <input type="checkbox" id="seedDemo" name="seedDemo"
                                            class="h-4 w-4 text-primary focus:ring-primary border-gray-300 rounded">
-                                    <label for="debug" class="ml-2 block text-sm text-gray-700">Modo Debug</label>
+                                    <label for="seedDemo" class="ml-2 block text-sm text-gray-700">Carregar dados de demonstração (planos, templates, org de teste)</label>
+                                </div>
+                                <div class="bg-blue-50 border border-blue-200 rounded-md p-4">
+                                    <p class="text-sm text-blue-800">
+                                        <strong>Nota:</strong> Um usuário administrador padrão será criado automaticamente:
+                                    </p>
+                                    <ul class="text-sm text-blue-700 mt-2 ml-4 list-disc">
+                                        <li>Email: <code>admin@ambiental.com</code></li>
+                                        <li>Senha: <code>Admin@123</code></li>
+                                    </ul>
+                                    <p class="text-sm text-blue-800 mt-2">
+                                        <strong>IMPORTANTE:</strong> Altere a senha após o primeiro login!
+                                    </p>
                                 </div>
                             </div>
                         </div>
 
-                        <!-- Submit Button -->
-                        <div class="flex justify-end space-x-4">
+                        <!-- Import Button -->
+                        <div class="flex justify-end">
                             <button type="button" id="importBtn" 
                                     class="px-6 py-2 border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2">
-                                📁 Importar JSON
-                            </button>
-                            <button type="submit" 
-                                    class="px-6 py-2 bg-primary text-white rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2">
-                                🚀 Configurar Sistema
+                                📁 Importar Configuração de Banco
                             </button>
                         </div>
                     </form>
@@ -376,11 +435,76 @@ async def setup_page():
                         📤 Exportar Configurações
                     </button>
                 </div>
+
+                <!-- Database Management Card -->
+                <div class="bg-white rounded-lg shadow-md p-6">
+                    <h3 class="text-lg font-semibold text-gray-900 mb-4">🗄️ Gerenciar Banco de Dados</h3>
+                    <p class="text-sm text-gray-600 mb-4">
+                        Inicialize ou reset o banco de dados conforme necessário.
+                    </p>
+                    <div class="space-y-3">
+                        <button id="initDbBtn" 
+                                class="w-full px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2">
+                            🚀 Inicializar Banco de Dados
+                        </button>
+                        <button id="resetDbBtn" 
+                                class="w-full px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2">
+                            🗑️ Resetar Banco de Dados
+                        </button>
+                    </div>
+                    <div id="dbResult" class="mt-2 text-sm"></div>
+                </div>
             </div>
         </div>
 
         <!-- Hidden file input for JSON import -->
         <input type="file" id="jsonFileInput" accept=".json" style="display: none;">
+
+        <!-- Reset Database Confirmation Modal -->
+        <div id="resetModal" class="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full hidden z-50">
+            <div class="relative top-20 mx-auto p-5 border w-96 shadow-lg rounded-md bg-white">
+                <div class="mt-3">
+                    <div class="mx-auto flex items-center justify-center h-12 w-12 rounded-full bg-red-100 mb-4">
+                        <svg class="h-6 w-6 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L3.732 16.5c-.77.833.192 2.5 1.732 2.5z" />
+                        </svg>
+                    </div>
+                    <h3 class="text-lg font-medium text-gray-900 text-center mb-4">Confirmar Reset do Banco de Dados</h3>
+                    <div class="mt-2 px-7 py-3">
+                        <p class="text-sm text-gray-500 mb-4">
+                            <strong class="text-red-600">ATENÇÃO:</strong> Esta ação irá apagar TODOS os dados do banco de dados, incluindo:
+                        </p>
+                        <ul class="text-sm text-gray-500 mb-4 list-disc list-inside">
+                            <li>Todas as tabelas e dados</li>
+                            <li>Histórico de migrations do Alembic</li>
+                            <li>Usuários, organizações e configurações</li>
+                        </ul>
+                        <p class="text-sm text-gray-500 mb-4">
+                            Após o reset, o sistema será reinicializado automaticamente com dados de teste.
+                        </p>
+                        <div class="mb-4">
+                            <label class="block text-sm font-medium text-gray-700 mb-2">
+                                Digite <strong>CONFIRMAR</strong> para prosseguir:
+                            </label>
+                            <input type="text" id="confirmResetInput" 
+                                   class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent"
+                                   placeholder="Digite CONFIRMAR aqui">
+                        </div>
+                    </div>
+                    <div class="flex justify-end space-x-3 px-4 py-3">
+                        <button id="cancelResetBtn" 
+                                class="px-4 py-2 bg-gray-300 text-gray-700 rounded-md hover:bg-gray-400 focus:outline-none focus:ring-2 focus:ring-gray-500 focus:ring-offset-2">
+                            Cancelar
+                        </button>
+                        <button id="confirmResetBtn" 
+                                class="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                                disabled>
+                            Resetar Banco
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
 
     <script>
@@ -394,6 +518,41 @@ async def setup_page():
         const dbStatus = document.getElementById('dbStatus');
         const configStatus = document.getElementById('configStatus');
         const initStatus = document.getElementById('initStatus');
+        
+        // Database Management Elements
+        const initDbBtn = document.getElementById('initDbBtn');
+        const resetDbBtn = document.getElementById('resetDbBtn');
+        const dbResult = document.getElementById('dbResult');
+        const resetModal = document.getElementById('resetModal');
+        const confirmResetInput = document.getElementById('confirmResetInput');
+        const confirmResetBtn = document.getElementById('confirmResetBtn');
+        const cancelResetBtn = document.getElementById('cancelResetBtn');
+
+        // Load saved configuration on page load
+        async function loadSavedConfig() {
+            try {
+                const response = await fetch('/api/config/load');
+                const result = await response.json();
+                
+                if (result.success && result.database) {
+                    const db = result.database;
+                    document.getElementById('dbHost').value = db.host || '';
+                    document.getElementById('dbPort').value = db.port || 5432;
+                    document.getElementById('dbName').value = db.database || '';
+                    document.getElementById('dbUser').value = db.username || '';
+                    document.getElementById('dbPassword').value = db.password || '';
+                    
+                    // Update status to show configuration was loaded
+                    configStatus.textContent = 'Carregado';
+                    configStatus.className = 'text-sm font-medium text-blue-600';
+                }
+            } catch (error) {
+                console.log('Nenhuma configuração prévia encontrada');
+            }
+        }
+
+        // Load config when page loads
+        window.addEventListener('DOMContentLoaded', loadSavedConfig);
 
         // Test database connection
         testDbBtn.addEventListener('click', async () => {
@@ -463,15 +622,7 @@ async def setup_page():
                     document.getElementById('dbPassword').value = config.database.password || '';
                 }
 
-                if (config.system) {
-                    document.getElementById('secretKey').value = config.system.secret_key || '';
-                    document.getElementById('tokenExpire').value = config.system.access_token_expire_minutes || 15;
-                    document.getElementById('refreshExpire').value = config.system.refresh_token_expire_days || 7;
-                    document.getElementById('environment').value = config.system.environment || 'development';
-                    document.getElementById('debug').checked = config.system.debug || false;
-                }
-
-                alert('✅ Configurações importadas com sucesso!');
+                alert('✅ Configurações de banco importadas com sucesso!');
             } catch (error) {
                 alert('❌ Erro ao importar arquivo: ' + error.message);
             }
@@ -486,13 +637,6 @@ async def setup_page():
                     database: document.getElementById('dbName').value,
                     username: document.getElementById('dbUser').value,
                     password: document.getElementById('dbPassword').value
-                },
-                system: {
-                    secret_key: document.getElementById('secretKey').value,
-                    access_token_expire_minutes: parseInt(document.getElementById('tokenExpire').value),
-                    refresh_token_expire_days: parseInt(document.getElementById('refreshExpire').value),
-                    environment: document.getElementById('environment').value,
-                    debug: document.getElementById('debug').checked
                 }
             };
 
@@ -507,61 +651,154 @@ async def setup_page():
             URL.revokeObjectURL(url);
         });
 
-        // Form submission
-        form.addEventListener('submit', async (event) => {
-            event.preventDefault();
 
-            const formData = new FormData(form);
-            const config = {
-                database: {
-                    host: document.getElementById('dbHost').value,
-                    port: parseInt(document.getElementById('dbPort').value),
-                    database: document.getElementById('dbName').value,
-                    username: document.getElementById('dbUser').value,
-                    password: document.getElementById('dbPassword').value
-                },
-                system: {
-                    secret_key: document.getElementById('secretKey').value,
-                    access_token_expire_minutes: parseInt(document.getElementById('tokenExpire').value),
-                    refresh_token_expire_days: parseInt(document.getElementById('refreshExpire').value),
-                    environment: document.getElementById('environment').value,
-                    debug: document.getElementById('debug').checked
-                }
+        // Initialize Database functionality
+        initDbBtn.addEventListener('click', async () => {
+            const dbConfig = {
+                host: document.getElementById('dbHost').value,
+                port: parseInt(document.getElementById('dbPort').value),
+                database: document.getElementById('dbName').value,
+                username: document.getElementById('dbUser').value,
+                password: document.getElementById('dbPassword').value
             };
 
+            const seedDemo = document.getElementById('seedDemo').checked;
+
+            if (!dbConfig.host || !dbConfig.database || !dbConfig.username || !dbConfig.password) {
+                dbResult.innerHTML = '<span class="text-red-600">❌ Configure primeiro a conexão com o banco de dados</span>';
+                return;
+            }
+
+            // Disable button and show loading
+            initDbBtn.disabled = true;
+            initDbBtn.textContent = '🔄 Inicializando...';
+
             try {
-                const response = await fetch('/api/setup', {
+                const response = await fetch('/api/init-database', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(config)
+                    body: JSON.stringify({
+                        database: dbConfig,
+                        seed_demo: seedDemo
+                    })
                 });
 
                 const result = await response.json();
 
                 if (result.success) {
-                    alert('🎉 Sistema configurado com sucesso!\\n\\n' + result.message);
+                    dbResult.innerHTML = '<span class="text-green-600">✅ ' + result.message.replace(/\\n/g, '<br>') + '</span>';
+                    // Update status indicators
+                    dbStatus.textContent = 'Inicializado';
+                    dbStatus.className = 'text-sm font-medium text-green-600';
                     configStatus.textContent = 'Configurado';
                     configStatus.className = 'text-sm font-medium text-green-600';
                     initStatus.textContent = 'Concluído';
                     initStatus.className = 'text-sm font-medium text-green-600';
                 } else {
-                    alert('❌ Erro na configuração: ' + result.message);
+                    dbResult.innerHTML = '<span class="text-red-600">❌ ' + result.message + '</span>';
                 }
             } catch (error) {
-                alert('❌ Erro na requisição: ' + error.message);
+                dbResult.innerHTML = '<span class="text-red-600">❌ Erro na requisição: ' + error.message + '</span>';
+            }
+
+            // Re-enable button
+            initDbBtn.disabled = false;
+            initDbBtn.textContent = '🚀 Inicializar Banco de Dados';
+        });
+
+        // Reset Database functionality
+        resetDbBtn.addEventListener('click', () => {
+            resetModal.classList.remove('hidden');
+            confirmResetInput.value = '';
+            confirmResetBtn.disabled = true;
+        });
+
+        cancelResetBtn.addEventListener('click', () => {
+            resetModal.classList.add('hidden');
+            confirmResetInput.value = '';
+            confirmResetBtn.disabled = true;
+        });
+
+        // Enable/disable confirm button based on input
+        confirmResetInput.addEventListener('input', () => {
+            const isValid = confirmResetInput.value === 'CONFIRMAR';
+            confirmResetBtn.disabled = !isValid;
+        });
+
+        // Confirm reset database
+        confirmResetBtn.addEventListener('click', async () => {
+            if (confirmResetInput.value !== 'CONFIRMAR') {
+                return;
+            }
+
+            const dbConfig = {
+                host: document.getElementById('dbHost').value,
+                port: parseInt(document.getElementById('dbPort').value),
+                database: document.getElementById('dbName').value,
+                username: document.getElementById('dbUser').value,
+                password: document.getElementById('dbPassword').value
+            };
+
+            const seedDemo = document.getElementById('seedDemo').checked;
+
+            if (!dbConfig.host || !dbConfig.database || !dbConfig.username || !dbConfig.password) {
+                dbResult.innerHTML = '<span class="text-red-600">❌ Configure primeiro a conexão com o banco de dados</span>';
+                return;
+            }
+
+            // Disable buttons and show loading
+            confirmResetBtn.disabled = true;
+            confirmResetBtn.textContent = '🔄 Resetando...';
+            resetDbBtn.disabled = true;
+            resetDbBtn.textContent = '🔄 Processando...';
+
+            try {
+                const response = await fetch('/api/reset-database', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        database: dbConfig,
+                        seed_demo: seedDemo
+                    })
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    dbResult.innerHTML = '<span class="text-green-600">✅ ' + result.message.replace(/\\n/g, '<br>') + '</span>';
+                    // Update status indicators
+                    dbStatus.textContent = 'Resetado';
+                    dbStatus.className = 'text-sm font-medium text-green-600';
+                    configStatus.textContent = 'Configurado';
+                    configStatus.className = 'text-sm font-medium text-green-600';
+                    initStatus.textContent = 'Concluído';
+                    initStatus.className = 'text-sm font-medium text-green-600';
+                } else {
+                    dbResult.innerHTML = '<span class="text-red-600">❌ ' + result.message + '</span>';
+                }
+            } catch (error) {
+                dbResult.innerHTML = '<span class="text-red-600">❌ Erro na requisição: ' + error.message + '</span>';
+            }
+
+            // Re-enable buttons
+            confirmResetBtn.disabled = false;
+            confirmResetBtn.textContent = 'Resetar Banco';
+            resetDbBtn.disabled = false;
+            resetDbBtn.textContent = '🗑️ Resetar Banco de Dados';
+            
+            // Close modal
+            resetModal.classList.add('hidden');
+        });
+
+        // Close modal when clicking outside
+        resetModal.addEventListener('click', (e) => {
+            if (e.target === resetModal) {
+                resetModal.classList.add('hidden');
+                confirmResetInput.value = '';
+                confirmResetBtn.disabled = true;
             }
         });
 
-        // Generate random secret key
-        document.addEventListener('DOMContentLoaded', () => {
-            const secretKeyField = document.getElementById('secretKey');
-            if (!secretKeyField.value) {
-                const randomKey = Math.random().toString(36).substring(2, 15) + 
-                                Math.random().toString(36).substring(2, 15) + 
-                                Math.random().toString(36).substring(2, 15);
-                secretKeyField.value = randomKey;
-            }
-        });
     </script>
 </body>
 </html>
@@ -573,31 +810,36 @@ async def test_database_endpoint(db_config: DatabaseConfig):
     success, message = test_database_connection(db_config)
     return JSONResponse({"success": success, "message": message})
 
-@app.post("/api/setup")
-async def setup_system(config: FullConfig):
-    """Endpoint para configurar o sistema completo"""
+@app.post("/api/init-database")
+async def init_database_endpoint(payload: InitDatabaseRequest):
+    """Endpoint para inicializar o banco de dados"""
     try:
         # Test database connection first
-        success, message = test_database_connection(config.database)
+        success, message = test_database_connection(payload.database)
         if not success:
             return JSONResponse({"success": False, "message": message}, status_code=400)
         
-        # Save configurations
-        config_manager.set_config("database", config.database.model_dump())
-        config_manager.set_config("system", config.system.model_dump())
+        # Save database configuration
+        config_manager.set_config("database", payload.database.model_dump())
         
-        # Create minimal .env file
-        create_minimal_env(config.database)
+        # Update database URL in environment
+        db_config = payload.database
+        os.environ["DATABASE_URL"] = f"postgresql://{db_config.username}:{db_config.password}@{db_config.host}:{db_config.port}/{db_config.database}"
         
-        # Update database URL in settings
-        os.environ["DATABASE_URL"] = f"postgresql://{config.database.username}:{config.database.password}@{config.database.host}:{config.database.port}/{config.database.database}"
+        # Create .env file
+        create_minimal_env(payload.database)
         
-        # Initialize database
+        # Initialize database with default admin credentials
         try:
-            init_database()
+            init_database(
+                admin_email="admin@ambiental.com",
+                admin_full_name="Administrador do Sistema",
+                admin_password="Admin@123",
+                seed_demo=payload.seed_demo
+            )
             return JSONResponse({
                 "success": True, 
-                "message": "Sistema configurado com sucesso!\\n\\nBanco de dados inicializado.\\nArquivo .env criado.\\n\\nVocê pode agora iniciar o servidor principal com: python main.py"
+                "message": "Banco de dados inicializado com sucesso!\\n\\nCriado:\\n- Todas as tabelas\\n- Roles do sistema\\n- Organização Administrativa\\n- Usuário Administrador (admin@ambiental.com)\\n\\n⚠️ IMPORTANTE: Altere a senha padrão após o primeiro login!"
             })
         except Exception as e:
             return JSONResponse({
@@ -608,8 +850,57 @@ async def setup_system(config: FullConfig):
     except Exception as e:
         return JSONResponse({
             "success": False, 
-            "message": f"Erro na configuração: {str(e)}"
+            "message": f"Erro na inicialização: {str(e)}"
         }, status_code=500)
+
+@app.post("/api/reset-database")
+async def reset_database_endpoint(payload: InitDatabaseRequest):
+    """Endpoint para resetar completamente o banco de dados"""
+    try:
+        # Test database connection first
+        success, message = test_database_connection(payload.database)
+        if not success:
+            return JSONResponse({"success": False, "message": message}, status_code=400)
+        
+        # Save database configuration
+        config_manager.set_config("database", payload.database.model_dump())
+        
+        # Create .env file
+        create_minimal_env(payload.database)
+        
+        # Execute complete database reset with default admin credentials
+        success, message = reset_complete_database(
+            db_config=payload.database,
+            admin_email="admin@ambiental.com",
+            admin_full_name="Administrador do Sistema",
+            admin_password="Admin@123",
+            seed_demo=payload.seed_demo
+        )
+        
+        if success:
+            return JSONResponse({
+                "success": True, 
+                "message": f"Reset completo realizado com sucesso!\\n\\n{message}\\n\\nO banco foi completamente resetado e reinicializado.\\n\\n⚠️ IMPORTANTE: Use admin@ambiental.com / Admin@123 para login e altere a senha!"
+            })
+        else:
+            return JSONResponse({
+                "success": False, 
+                "message": f"Erro no reset do banco: {message}"
+            }, status_code=500)
+            
+    except Exception as e:
+        return JSONResponse({
+            "success": False, 
+            "message": f"Erro no reset do banco: {str(e)}"
+        }, status_code=500)
+
+@app.get("/api/config/load")
+async def load_config():
+    """Carrega configurações salvas"""
+    db_config = config_manager.get_config("database")
+    if db_config:
+        return JSONResponse({"success": True, "database": db_config})
+    return JSONResponse({"success": False, "database": None})
 
 @app.get("/api/config/export")
 async def export_config():

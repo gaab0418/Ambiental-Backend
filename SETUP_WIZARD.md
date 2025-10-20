@@ -125,5 +125,5 @@ Após o setup:
 1. Execute `python main.py` para iniciar o servidor principal
 2. Acesse `http://localhost:8000/docs` para a documentação da API
 3. Acesse `http://localhost:8000/admin` para o painel administrativo
-4. Faça login com: `admin@ambiental.com` / `admin123`
+4. Faça login com: `admin@ambiental.com` / `Admin@123`
 5. Configure sua organização e usuários

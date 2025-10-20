@@ -116,9 +116,8 @@ async def invite_user(
         License.user_id.is_(None)
     ).first()
     
-    # Create user with temporary password
-    temp_password = "temp123"  # In production, generate a secure random password
-    hashed_password = get_password_hash(temp_password)
+    # Create user with provided password (validated by schema)
+    hashed_password = get_password_hash(user_data.password)
     
     new_user = User(
         email=user_data.email,

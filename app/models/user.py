@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, Boolean, ForeignKey
+from sqlalchemy import Column, Integer, String, DateTime, Boolean, ForeignKey, Text
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.database import Base
@@ -17,6 +17,11 @@ class User(Base):
     # Foreign Keys
     organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=False, index=True)
     role_id = Column(Integer, ForeignKey("roles.id"), nullable=False)
+    
+    # Profile fields
+    profile_image_url = Column(String(500), nullable=True)
+    phone = Column(String(50), nullable=True)
+    bio = Column(Text, nullable=True)
     
     # Timestamps
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)

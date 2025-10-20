@@ -807,6 +807,37 @@ async def create_plan(
     db: Session = Depends(get_db)
 ):
     """Create a new plan (Master only)."""
+    # Validations
+    if plan_data.price < 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Price must be >= 0"
+        )
+    
+    if plan_data.max_users <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Max users must be > 0"
+        )
+    
+    if plan_data.max_storage_gb < 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Max storage must be >= 0"
+        )
+    
+    if not plan_data.name or not plan_data.name.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Plan name cannot be empty"
+        )
+    
+    if not plan_data.display_name or not plan_data.display_name.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Display name cannot be empty"
+        )
+    
     # Check if plan name already exists
     existing_plan = db.query(Plan).filter(Plan.name == plan_data.name).first()
     if existing_plan:
@@ -929,3 +960,41 @@ async def delete_plan(
     db.commit()
     
     return {"message": f"Plan {plan_name} deleted successfully"}
+
+
+@router.get("/plans/{plan_id}/subscriptions")
+async def get_plan_subscriptions(
+    plan_id: int,
+    current_user: User = Depends(require_super_admin),
+    db: Session = Depends(get_db)
+):
+    """Get all subscriptions using a specific plan (Master only)."""
+    plan = db.query(Plan).filter(Plan.id == plan_id).first()
+    if not plan:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Plan not found"
+        )
+    
+    subscriptions = db.query(Subscription).filter(
+        Subscription.plan_id == plan_id
+    ).all()
+    
+    result = []
+    for sub in subscriptions:
+        org = db.query(Organization).filter(Organization.id == sub.organization_id).first()
+        result.append({
+            "subscription_id": sub.id,
+            "organization_id": sub.organization_id,
+            "organization_name": org.name if org else "Unknown",
+            "status": sub.status.value if sub.status else "unknown",
+            "start_date": sub.start_date.isoformat() if sub.start_date else None,
+            "end_date": sub.end_date.isoformat() if sub.end_date else None
+        })
+    
+    return {
+        "plan_id": plan_id,
+        "plan_name": plan.display_name,
+        "total_subscriptions": len(result),
+        "subscriptions": result
+    }

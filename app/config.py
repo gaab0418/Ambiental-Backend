@@ -1,9 +1,15 @@
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import List
 from pydantic import computed_field
 
 
 class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        case_sensitive=False,
+        extra='ignore'  # Ignore extra fields from .env
+    )
+    
     # Database
     database_url: str = "postgresql://username:password@localhost:5432/ambiental_db"
     
@@ -18,7 +24,7 @@ class Settings(BaseSettings):
     debug: bool = True
     
     # CORS - stored as string, converted to list
-    allowed_origins_str: str = "http://localhost:3000,http://localhost:8080"
+    allowed_origins_str: str = "http://localhost:3000,http://localhost:8080,http://localhost:4200"
     
     @computed_field
     @property
@@ -27,10 +33,6 @@ class Settings(BaseSettings):
         if not self.allowed_origins_str:
             return []
         return [origin.strip() for origin in self.allowed_origins_str.split(',') if origin.strip()]
-    
-    class Config:
-        env_file = ".env"
-        case_sensitive = False
 
 
 settings = Settings()
