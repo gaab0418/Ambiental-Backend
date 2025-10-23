@@ -13,10 +13,10 @@ router = APIRouter()
 
 @router.get("", response_model=dict)
 async def get_templates(
-    is_global: Optional[bool] = Query(None),
-    is_active: Optional[bool] = Query(True),
-    organization_id: Optional[int] = Query(None),
-    created_by_user_id: Optional[int] = Query(None),
+    is_global: Optional[str] = Query(None),
+    is_active: Optional[str] = Query("true"),
+    organization_id: Optional[str] = Query(None),
+    created_by_user_id: Optional[str] = Query(None),
     limit: int = Query(50, ge=1, le=100),
     offset: int = Query(0, ge=0),
     current_user: User = Depends(get_current_active_user),
@@ -26,24 +26,63 @@ async def get_templates(
     
     query = db.query(DocumentTemplate)
     
-    # Apply filters
+    # Parse is_global from string
+    is_global_bool = None
     if is_global is not None:
-        query = query.filter(DocumentTemplate.is_global == is_global)
+        is_global_bool = is_global.lower() in ('true', '1', 'yes')
     
+    # Parse is_active from string
+    is_active_bool = None
     if is_active is not None:
-        query = query.filter(DocumentTemplate.is_active == is_active)
+        is_active_bool = is_active.lower() in ('true', '1', 'yes')
     
+    # Parse organization_id - accept 'me' or numeric
+    org_id_filter = None
     if organization_id:
-        query = query.filter(DocumentTemplate.organization_id == organization_id)
-    elif not is_global:
-        # If not filtering for global templates, show user's organization templates
+        if organization_id.lower() == 'me':
+            org_id_filter = current_user.organization_id
+        else:
+            try:
+                org_id_filter = int(organization_id)
+                # Check permission if accessing another org's data
+                if org_id_filter != current_user.organization_id:
+                    if current_user.role.name not in ["CONSULTANT", "ADMINISTRATOR"]:
+                        raise HTTPException(
+                            status_code=403,
+                            detail="Not authorized to access other organization's templates"
+                        )
+            except ValueError:
+                raise HTTPException(status_code=400, detail="Invalid organization_id")
+    
+    # Parse created_by_user_id - accept 'me' or numeric
+    user_id_filter = None
+    if created_by_user_id:
+        if created_by_user_id.lower() == 'me':
+            user_id_filter = current_user.id
+        else:
+            try:
+                user_id_filter = int(created_by_user_id)
+            except ValueError:
+                raise HTTPException(status_code=400, detail="Invalid created_by_user_id")
+    
+    # Apply filters
+    if is_global_bool is not None:
+        query = query.filter(DocumentTemplate.is_global == is_global_bool)
+    
+    if is_active_bool is not None:
+        query = query.filter(DocumentTemplate.is_active == is_active_bool)
+    
+    if org_id_filter:
+        query = query.filter(DocumentTemplate.organization_id == org_id_filter)
+    elif not is_global_bool:
+        # If not filtering for global templates, show user's organization templates + global
         query = query.filter(
             (DocumentTemplate.organization_id == current_user.organization_id) |
             (DocumentTemplate.is_global == True)
         )
     
-    if created_by_user_id:
-        query = query.filter(DocumentTemplate.created_by_user_id == created_by_user_id)
+    if user_id_filter:
+        query = query.filter(DocumentTemplate.created_by_user_id == user_id_filter)
     
     # Get total count
     total = query.count()

@@ -67,3 +67,8 @@ class UserProfileUpdate(BaseModel):
     phone: Optional[str] = Field(None, max_length=50)
     bio: Optional[str] = None
     profile_image_url: Optional[str] = Field(None, max_length=500)
+
+
+class PasswordChangeRequest(BaseModel):
+    old_password: str = Field(min_length=1)
+    new_password: str = Field(min_length=8, max_length=128)

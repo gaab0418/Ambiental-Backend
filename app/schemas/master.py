@@ -84,6 +84,7 @@ class PlanResponse(BaseModel):
     max_storage_gb: Optional[int] = None
     features: Optional[str] = None  # JSON string
     is_active: bool
+    is_system: bool
     created_at: datetime
 
     class Config:

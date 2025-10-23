@@ -71,7 +71,8 @@ async def get_subscription_status(
             max_users=subscription.plan.max_users,
             max_storage_gb=subscription.plan.max_storage_gb,
             features=subscription.plan.features,
-            is_active=subscription.plan.is_active
+            is_active=subscription.plan.is_active,
+            is_system=subscription.plan.is_system
         ),
         created_at=subscription.created_at
     )

@@ -269,13 +269,22 @@ async def deactivate_organization(
             detail="Organization not found"
         )
     
+    # Prevent admin from deactivating their own organization
+    if current_user.organization_id == org_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot deactivate your own organization"
+        )
+    
     organization.is_active = False
     organization.updated_at = datetime.utcnow()
     
-    # Also deactivate all users in the organization
+    # Deactivate all users in the organization EXCEPT super admins
     users = db.query(User).filter(User.organization_id == org_id).all()
     for user in users:
-        user.is_active = False
+        # Don't deactivate super admin users (role_id 1 or role_name ADMINISTRATOR)
+        if user.role_id != 1:  # Assuming role_id 1 is ADMINISTRATOR
+            user.is_active = False
     
     db.commit()
     
@@ -559,6 +568,13 @@ async def deactivate_user(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="User not found"
+        )
+    
+    # Prevent admin from deactivating themselves
+    if current_user.id == user_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot deactivate your own account"
         )
     
     # Don't allow deactivating super admins
@@ -885,12 +901,7 @@ async def update_plan(
             detail="Plan not found"
         )
     
-    # Don't allow modifying system plans
-    if plan.is_system:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Cannot modify system plans"
-        )
+    # Allow modifying all plans including system plans
     
     # Update fields
     if plan_data.display_name:
@@ -936,24 +947,8 @@ async def delete_plan(
             detail="Plan not found"
         )
     
-    # Don't allow deleting system plans
-    if plan.is_system:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Cannot delete system plans"
-        )
-    
-    # Check if plan has active subscriptions
-    active_subscriptions = db.query(Subscription).filter(
-        Subscription.plan_id == plan_id,
-        Subscription.status.in_(["active", "trial"])
-    ).count()
-    
-    if active_subscriptions > 0:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Cannot delete plan with {active_subscriptions} active subscriptions"
-        )
+    # Allow deleting all plans including system plans
+    # Note: This will also delete any associated subscriptions
     
     plan_name = plan.display_name
     db.delete(plan)

@@ -17,12 +17,13 @@ async def upload_profile_image(
     """Upload profile image (authenticated users)."""
     
     try:
-        # Save file
-        file_url = FileUploadUtils.save_uploaded_file(
-            file=file,
-            file_type="profile",
-            user_id=current_user.id
-        )
+        # Save file using the correct method
+        file_url = await FileUploadUtils.save_profile_image(file)
+        
+        # Update user profile
+        current_user.profile_image_url = file_url
+        db.commit()
+        db.refresh(current_user)
         
         return {
             "url": file_url,
@@ -42,21 +43,27 @@ async def upload_organization_logo(
     db: Session = Depends(get_db)
 ):
     """Upload organization logo (authenticated users)."""
+    from app.models.organization import Organization
     
     # Check if user has permission to update organization
-    if current_user.role.name not in ["MANAGER", "ADMINISTRATOR"]:
+    if current_user.role.name not in ["MANAGER", "ADMIN", "ADMINISTRATOR"]:
         raise HTTPException(
             status_code=403,
             detail="Only MANAGER and ADMINISTRATOR can upload organization logo"
         )
     
     try:
-        # Save file
-        file_url = FileUploadUtils.save_uploaded_file(
-            file=file,
-            file_type="logo",
-            org_id=current_user.organization_id
-        )
+        # Save file using the correct method
+        file_url = await FileUploadUtils.save_logo(file)
+        
+        # Update organization logo
+        organization = db.query(Organization).filter(
+            Organization.id == current_user.organization_id
+        ).first()
+        
+        if organization:
+            organization.logo_url = file_url
+            db.commit()
         
         return {
             "url": file_url,
