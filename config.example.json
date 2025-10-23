@@ -1,0 +1,16 @@
+{
+  "database": {
+    "host": "localhost",
+    "port": 5432,
+    "database": "ambiental_db",
+    "username": "postgres",
+    "password": "sua_senha_aqui"
+  },
+  "system": {
+    "secret_key": "sua-chave-secreta-super-segura-aqui",
+    "access_token_expire_minutes": 15,
+    "refresh_token_expire_days": 7,
+    "environment": "development",
+    "debug": true
+  }
+}
