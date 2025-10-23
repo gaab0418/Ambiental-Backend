@@ -13,7 +13,7 @@ from app.core.security import (
     verify_password, get_password_hash,
     create_access_token, create_refresh_token, verify_token
 )
-from app.schemas.auth import Token, UserRegister, UserResponse, RefreshTokenRequest, UserSelfUpdateRequest, UserProfileUpdate
+from app.schemas.auth import Token, UserRegister, UserResponse, RefreshTokenRequest, UserSelfUpdateRequest, UserProfileUpdate, PasswordChangeRequest
 from app.dependencies.auth import get_current_user
 from app.config import settings
 
@@ -278,10 +278,32 @@ async def refresh_access_token(
 
 @router.get("/me", response_model=UserResponse)
 async def get_current_user_info(
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
 ):
     """Get current user information."""
-    return current_user
+    # Load related data
+    user_with_relations = db.query(User).filter(User.id == current_user.id).first()
+    
+    # Create response with populated fields
+    response_data = {
+        "id": user_with_relations.id,
+        "email": user_with_relations.email,
+        "full_name": user_with_relations.full_name,
+        "is_active": user_with_relations.is_active,
+        "is_verified": user_with_relations.is_verified,
+        "organization_id": user_with_relations.organization_id,
+        "role_id": user_with_relations.role_id,
+        "profile_image_url": user_with_relations.profile_image_url,
+        "phone": user_with_relations.phone,
+        "bio": user_with_relations.bio,
+        "created_at": user_with_relations.created_at,
+        "last_login_at": user_with_relations.last_login_at,
+        "role_name": user_with_relations.role.name if user_with_relations.role else None,
+        "organization_name": user_with_relations.organization.name if user_with_relations.organization else None
+    }
+    
+    return UserResponse(**response_data)
 
 
 @router.post("/test-update-login")
@@ -370,3 +392,44 @@ async def update_user_profile(
     )
     
     return current_user
+
+
+@router.put("/me/password", response_model=dict)
+async def change_password(
+    password_data: PasswordChangeRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Change user password."""
+    from app.utils.audit_logger import AuditLogger
+    
+    # Verify old password
+    if not verify_password(password_data.old_password, current_user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect password"
+        )
+    
+    # Validate new password strength (minimum 8 characters)
+    if len(password_data.new_password) < 8:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Password must be at least 8 characters long"
+        )
+    
+    # Update password
+    current_user.hashed_password = get_password_hash(password_data.new_password)
+    current_user.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    
+    # Log audit
+    AuditLogger.log_update(
+        db=db,
+        entity_type="User",
+        entity_id=current_user.id,
+        changes={"action": "password_changed"},
+        user_id=current_user.id,
+        organization_id=current_user.organization_id
+    )
+    
+    return {"message": "Password changed successfully"}

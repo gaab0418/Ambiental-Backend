@@ -77,3 +77,7 @@ class OrganizationFullUpdate(BaseModel):
     industry: Optional[str] = Field(None, max_length=100)
     description: Optional[str] = None
     logo_url: Optional[str] = Field(None, max_length=500)
+
+
+class UserRoleChangeRequest(BaseModel):
+    role_id: int = Field(gt=0)

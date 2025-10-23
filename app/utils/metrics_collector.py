@@ -6,11 +6,15 @@ Collects and aggregates system metrics for dashboard and reports
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from datetime import datetime, timedelta
+from typing import Optional, List
+import json
 from app.models.user import User
 from app.models.organization import Organization
 from app.models.subscription import Subscription, SubscriptionStatus
 from app.models.license import License, LicenseStatus
 from app.models.plan import Plan
+from app.models.system_metric import SystemMetric
+from app.models.audit_log import AuditLog
 
 
 class MetricsCollector:
@@ -18,39 +22,39 @@ class MetricsCollector:
     
     @staticmethod
     def collect_dashboard_metrics(db: Session) -> dict:
-        """Collect main dashboard metrics"""
+        """Collect main dashboard metrics matching MetricsDashboard schema"""
         
         # Count totals
         total_users = db.query(User).count()
-        active_users = db.query(User).filter(User.is_active == True).count()
         total_organizations = db.query(Organization).count()
         active_organizations = db.query(Organization).filter(Organization.is_active == True).count()
         
-        # Subscription metrics
-        active_subscriptions = db.query(Subscription).filter(
-            Subscription.status == SubscriptionStatus.ACTIVE
+        # Active users today (logged in today)
+        today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+        active_users_today = db.query(User).filter(
+            User.is_active == True,
+            User.last_login_at >= today_start
         ).count()
         
-        trial_subscriptions = db.query(Subscription).filter(
-            Subscription.status == SubscriptionStatus.TRIAL
+        # API calls today (audit log entries)
+        api_calls_today = db.query(AuditLog).filter(
+            AuditLog.created_at >= today_start
         ).count()
         
-        # License metrics
-        total_licenses = db.query(License).count()
-        active_licenses = db.query(License).filter(
-            License.status == LicenseStatus.ACTIVE
-        ).count()
+        # Uptime hours (placeholder - in production, track app start time)
+        uptime_hours = 0.0
+        
+        # Storage used GB (placeholder - in production, calculate actual storage)
+        storage_used_gb = 0.0
         
         return {
-            "total_users": total_users,
-            "active_users": active_users,
+            "uptime_hours": uptime_hours,
             "total_organizations": total_organizations,
             "active_organizations": active_organizations,
-            "active_subscriptions": active_subscriptions,
-            "trial_subscriptions": trial_subscriptions,
-            "total_licenses": total_licenses,
-            "active_licenses": active_licenses,
-            "license_utilization_rate": round((active_licenses / total_licenses * 100) if total_licenses > 0 else 0, 2)
+            "total_users": total_users,
+            "active_users_today": active_users_today,
+            "api_calls_today": api_calls_today,
+            "storage_used_gb": storage_used_gb
         }
     
     @staticmethod
@@ -126,4 +130,76 @@ class MetricsCollector:
             "total_active_users": total_active,
             "user_engagement_rate": round((active_in_period / total_active * 100) if total_active > 0 else 0, 2)
         }
+    
+    @staticmethod
+    def get_usage_metrics(
+        db: Session,
+        date_from: Optional[datetime] = None,
+        date_to: Optional[datetime] = None,
+        metric_type: Optional[str] = None,
+        limit: int = 100
+    ) -> List[SystemMetric]:
+        """Get usage metrics for a date range"""
+        
+        # Validate limit
+        if limit < 1:
+            limit = 1
+        elif limit > 1000:
+            limit = 1000
+        
+        # Build query
+        query = db.query(SystemMetric)
+        
+        # Apply filters
+        if date_from:
+            query = query.filter(SystemMetric.recorded_at >= date_from)
+        
+        if date_to:
+            query = query.filter(SystemMetric.recorded_at <= date_to)
+        
+        if metric_type:
+            query = query.filter(SystemMetric.metric_type == metric_type)
+        
+        # Order by most recent first and limit
+        metrics = query.order_by(SystemMetric.recorded_at.desc()).limit(limit).all()
+        
+        return metrics
+    
+    @staticmethod
+    def record_metric(
+        db: Session,
+        metric_type: str,
+        value: float,
+        metadata: Optional[dict] = None
+    ) -> SystemMetric:
+        """Record a system metric"""
+        
+        # Validate metric_type
+        if not metric_type or not metric_type.strip():
+            raise ValueError("metric_type cannot be empty")
+        
+        # Validate value is finite
+        if not isinstance(value, (int, float)) or value != value:  # NaN check
+            raise ValueError("value must be a finite number")
+        
+        # Serialize metadata if provided
+        metadata_json = None
+        if metadata:
+            try:
+                metadata_json = json.dumps(metadata)
+            except (TypeError, ValueError) as e:
+                raise ValueError(f"metadata must be JSON-serializable: {str(e)}")
+        
+        # Create metric
+        metric = SystemMetric(
+            metric_type=metric_type,
+            value=float(value),
+            metadata_json=metadata_json
+        )
+        
+        db.add(metric)
+        db.commit()
+        db.refresh(metric)
+        
+        return metric
 

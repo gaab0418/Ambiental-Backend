@@ -11,7 +11,7 @@ from app.models.subscription import Subscription
 from app.core.security import get_password_hash
 from app.schemas.organization import (
     OrganizationResponse, UserInviteRequest, UserInviteResponse, RoleResponse,
-    UserUpdateRequest, OrganizationUpdateRequest
+    UserUpdateRequest, OrganizationUpdateRequest, UserRoleChangeRequest
 )
 from app.dependencies.auth import require_manager_or_admin
 
@@ -274,3 +274,83 @@ async def update_organization_info(
     db.refresh(organization)
     
     return organization
+
+
+# Alias endpoints matching frontend expectations
+@router.get("/me/users", response_model=List[UserInviteResponse])
+async def get_organization_users_me(
+    current_user: User = Depends(require_manager_or_admin),
+    db: Session = Depends(get_db)
+):
+    """Get all users from the current organization (alias for /users)."""
+    return await get_organization_users(current_user, db)
+
+
+@router.post("/me/users/invite", response_model=UserInviteResponse)
+async def invite_user_me(
+    user_data: UserInviteRequest,
+    current_user: User = Depends(require_manager_or_admin),
+    db: Session = Depends(get_db)
+):
+    """Invite a new user to the organization (alias for /users/invite)."""
+    return await invite_user(user_data, current_user, db)
+
+
+@router.delete("/me/users/{user_id}")
+async def remove_user_me(
+    user_id: int,
+    current_user: User = Depends(require_manager_or_admin),
+    db: Session = Depends(get_db)
+):
+    """Remove a user from the organization (alias for /users/{user_id})."""
+    return await remove_user(user_id, current_user, db)
+
+
+@router.put("/me/users/{user_id}/role", response_model=UserInviteResponse)
+async def change_user_role(
+    user_id: int,
+    role_data: UserRoleChangeRequest,
+    current_user: User = Depends(require_manager_or_admin),
+    db: Session = Depends(get_db)
+):
+    """Change a user's role within the organization."""
+    # Check if user exists and belongs to the same organization
+    user_to_update = db.query(User).filter(
+        User.id == user_id,
+        User.organization_id == current_user.organization_id
+    ).first()
+    
+    if not user_to_update:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found in this organization"
+        )
+    
+    # Prevent changing own role
+    if user_to_update.id == current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot change your own role"
+        )
+    
+    # Validate role exists
+    role = db.query(Role).filter(Role.id == role_data.role_id).first()
+    if not role:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid role"
+        )
+    
+    # Don't allow assigning SUPER_ADMIN or ADMINISTRATOR
+    if role.name in ["SUPER_ADMIN", "ADMINISTRATOR"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cannot assign system-level roles"
+        )
+    
+    # Update role
+    user_to_update.role_id = role_data.role_id
+    db.commit()
+    db.refresh(user_to_update)
+    
+    return user_to_update

@@ -54,7 +54,6 @@ def reset_database():
         print("\nProximos passos:")
         print("1. Execute: python scripts/init_db.py")
         print("2. Execute: python main.py")
-        print("3. Teste os endpoints em: http://localhost:8000/docs")
         
     except Exception as e:
         print(f"Erro ao resetar banco de dados: {e}")

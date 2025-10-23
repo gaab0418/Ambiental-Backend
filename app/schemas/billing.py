@@ -15,6 +15,7 @@ class PlanResponse(BaseModel):
     max_storage_gb: Optional[int] = None
     features: Optional[str] = None
     is_active: bool
+    is_system: bool
 
     class Config:
         from_attributes = True

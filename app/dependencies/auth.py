@@ -68,7 +68,7 @@ def require_role(required_roles: list[str]):
 
 def require_admin_role(current_user: User = Depends(get_current_active_user)) -> User:
     """Require admin role."""
-    if current_user.role.name not in ["ADMIN", "ADMINISTRATOR"]:
+    if current_user.role.name not in ["ADMIN", "ADMINISTRATOR", "MANAGER"]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Admin role required"

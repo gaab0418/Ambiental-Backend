@@ -2,7 +2,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from app.config import settings
-from app.api.v1 import auth, organization, billing, master, logs_test as logs, metrics, templates, upload, consultant
+from app.api.v1 import auth, organization, billing, master, logs, metrics, templates, upload, consultant, chat
+from app.middleware.audit import AuditMiddleware
 from app.database import engine
 from app.models import Base
 import os
@@ -24,6 +25,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Audit middleware for logging API requests
+app.add_middleware(
+    AuditMiddleware,
+    exclude_paths=["/docs", "/redoc", "/openapi.json", "/health", "/metrics"]
+)
+
 # Create uploads directory if it doesn't exist
 uploads_dir = os.path.join(os.getcwd(), "uploads")
 os.makedirs(uploads_dir, exist_ok=True)
@@ -43,6 +50,7 @@ app.include_router(metrics.router, prefix="/api/metrics", tags=["Metrics"])
 app.include_router(templates.router, prefix="/api/templates", tags=["Templates"])
 app.include_router(upload.router, prefix="/api/upload", tags=["Upload"])
 app.include_router(consultant.router, prefix="/api/consultant", tags=["Consultant"])
+app.include_router(chat.router, prefix="/api/chat", tags=["Chat"])
 
 
 @app.on_event("startup")
@@ -55,7 +63,6 @@ async def startup_event():
     
     print("🚀 Ambiental SaaS API iniciada!")
     print("📊 Sistema configurado e funcionando")
-    print("🔗 Acesse a documentação: http://localhost:8000/docs")
 
 
 @app.get("/")
@@ -78,5 +85,22 @@ async def health_check():
         "details": {
             "connection": status["connection_message"],
             "tables": status["tables_message"]
+        }
+    }
+
+
+@app.get("/status")
+async def status():
+    from app.utils.db_validator import get_database_status
+    
+    db_status = get_database_status()
+    
+    return {
+        "message": "Sistema funcionando corretamente" if db_status["ready"] else "Erro no sistema",
+        "version": "1.0.0",
+        "environment": settings.environment,
+        "database": {
+            "status": "connected" if db_status["connected"] else "disconnected",
+            "tables_exist": db_status["tables_exist"]
         }
     }

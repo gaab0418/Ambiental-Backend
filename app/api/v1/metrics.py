@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy.orm import Session
 from typing import Optional
 from datetime import datetime
@@ -44,6 +44,13 @@ async def get_usage_metrics(
 ):
     """Get usage metrics for a date range (ADMINISTRATOR only)."""
     
+    # Validate date range
+    if date_from and date_to and date_from > date_to:
+        raise HTTPException(
+            status_code=400,
+            detail="date_from must be before date_to"
+        )
+    
     metrics = MetricsCollector.get_usage_metrics(
         db=db,
         date_from=date_from,
@@ -57,22 +64,23 @@ async def get_usage_metrics(
 
 @router.post("/record")
 async def record_metric(
-    metric_type: str,
-    value: float,
-    metadata: Optional[dict] = None,
+    metric_data: dict,
     current_user: User = Depends(require_administrator),
     db: Session = Depends(get_db)
 ):
     """Record a system metric (ADMINISTRATOR only)."""
     
-    metric = MetricsCollector.record_metric(
-        db=db,
-        metric_type=metric_type,
-        value=value,
-        metadata=metadata
-    )
-    
-    return {"message": "Metric recorded successfully", "id": metric.id}
+    try:
+        metric = MetricsCollector.record_metric(
+            db=db,
+            metric_type=metric_data.get("metric_type"),
+            value=metric_data.get("value"),
+            metadata=metric_data.get("metadata")
+        )
+        
+        return {"message": "Metric recorded successfully", "id": metric.id}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 
