@@ -116,34 +116,34 @@ def validate_database_or_exit():
     This is meant to be called during application startup
     """
     print("=" * 60)
-    print("🔍 Validando configuração do banco de dados...")
+    print("[INFO] Validando configuracao do banco de dados...")
     print("=" * 60)
     
     status = get_database_status()
     
     if not status["connected"]:
-        print("\n❌ ERRO: Não foi possível conectar ao banco de dados!")
+        print("\n[ERRO] Nao foi possivel conectar ao banco de dados!")
         print(f"   Motivo: {status['connection_message']}")
-        print("\n📋 Solução:")
-        print("   1. Verifique se o PostgreSQL está rodando")
+        print("\n[SOLUCAO]")
+        print("   1. Verifique se o PostgreSQL esta rodando")
         print("   2. Execute: python setup.py")
-        print("   3. Configure a conexão com o banco de dados via interface web")
+        print("   3. Configure a conexao com o banco de dados via interface web")
         print("=" * 60)
         sys.exit(1)
     
     if not status["tables_exist"]:
-        print("\n❌ ERRO: Tabelas do banco de dados não encontradas!")
+        print("\n[ERRO] Tabelas do banco de dados nao encontradas!")
         print(f"   Motivo: {status['tables_message']}")
         if status["missing_tables"]:
             print(f"   Tabelas faltando: {', '.join(status['missing_tables'])}")
-        print("\n📋 Solução:")
+        print("\n[SOLUCAO]")
         print("   1. Execute: python setup.py")
         print("   2. Acesse: http://localhost:8001")
         print("   3. Inicialize o banco de dados via interface web")
         print("=" * 60)
         sys.exit(1)
     
-    print("\n✅ Banco de dados validado com sucesso!")
+    print("\n[OK] Banco de dados validado com sucesso!")
     print(f"   {status['connection_message']}")
     print(f"   {status['tables_message']}")
     print("=" * 60)

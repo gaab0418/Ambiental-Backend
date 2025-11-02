@@ -44,7 +44,17 @@ class AuditMiddleware(BaseHTTPMiddleware):
             current_user = await get_current_user_optional(request)
             if current_user:
                 user_id = current_user.id
-                organization_id = current_user.organization_id
+                # Extract organization_id from token
+                from app.core.security import verify_token
+                authorization = request.headers.get("Authorization", "")
+                if authorization.startswith("Bearer "):
+                    token = authorization.split(" ")[1]
+                    try:
+                        payload = verify_token(token, "access")
+                        if payload:
+                            organization_id = payload.get("organization_id")
+                    except:
+                        pass
         except Exception:
             # Ignore errors - user might not be authenticated
             pass

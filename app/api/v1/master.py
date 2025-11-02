@@ -16,6 +16,8 @@ from app.schemas.master import (
 )
 from app.core.security import get_password_hash
 from app.models.license import License, LicenseStatus
+from app.models.user_organization_association import UserOrganizationAssociation
+from app.models.role import Role
 from app.dependencies.auth import require_super_admin
 
 router = APIRouter()
@@ -29,13 +31,14 @@ async def get_all_organizations(
     limit: int = 100
 ):
     """Get all organizations in the platform."""
+    
     organizations = db.query(Organization).offset(skip).limit(limit).all()
     
     result = []
     for org in organizations:
-        # Get user count
-        user_count = db.query(User).filter(
-            User.organization_id == org.id
+        # Get user count using the association table
+        user_count = db.query(UserOrganizationAssociation).filter(
+            UserOrganizationAssociation.organization_id == org.id
         ).count()
         
         # Get subscription status
@@ -79,9 +82,9 @@ async def get_organization_details(
             detail="Organization not found"
         )
     
-    # Get user count
-    user_count = db.query(User).filter(
-        User.organization_id == organization.id
+    # Get user count through association table
+    user_count = db.query(UserOrganizationAssociation).filter(
+        UserOrganizationAssociation.organization_id == organization.id
     ).count()
     
     # Get subscription status
@@ -199,6 +202,44 @@ async def update_organization_subscription(
     return {"message": "Subscription updated successfully"}
 
 
+@router.get("/users", response_model=List[MasterUserResponse])
+async def get_all_users(
+    current_user: User = Depends(require_super_admin),
+    db: Session = Depends(get_db),
+    skip: int = 0,
+    limit: int = 100
+):
+    """Get all users in the platform."""
+    
+    # Get users with their organization associations
+    users = db.query(User).offset(skip).limit(limit).all()
+    
+    result = []
+    for user in users:
+        # Get the first organization association for this user
+        assoc = db.query(UserOrganizationAssociation).filter(
+            UserOrganizationAssociation.user_id == user.id
+        ).first()
+        
+        if assoc:
+            role = db.query(Role).filter(Role.id == assoc.role_id).first()
+            org = db.query(Organization).filter(Organization.id == assoc.organization_id).first()
+            
+            result.append(MasterUserResponse(
+                id=user.id,
+                email=user.email,
+                full_name=user.full_name,
+                is_active=user.is_active,
+                is_verified=user.is_verified,
+                role_name=role.name if role else "USER",
+                organization_name=org.name if org else "Unknown",
+                created_at=user.created_at,
+                last_login_at=user.last_login_at
+            ))
+    
+    return result
+
+
 @router.get("/organizations/{org_id}/users", response_model=List[MasterUserResponse])
 async def get_organization_users(
     org_id: int,
@@ -206,6 +247,7 @@ async def get_organization_users(
     db: Session = Depends(get_db)
 ):
     """Get all users from a specific organization."""
+    
     # Verify organization exists
     organization = db.query(Organization).filter(Organization.id == org_id).first()
     if not organization:
@@ -214,21 +256,28 @@ async def get_organization_users(
             detail="Organization not found"
         )
     
-    users = db.query(User).filter(User.organization_id == org_id).all()
+    # Get users through the association table
+    associations = db.query(UserOrganizationAssociation).filter(
+        UserOrganizationAssociation.organization_id == org_id
+    ).all()
     
     result = []
-    for user in users:
-        result.append(MasterUserResponse(
-            id=user.id,
-            email=user.email,
-            full_name=user.full_name,
-            is_active=user.is_active,
-            is_verified=user.is_verified,
-            role_name=user.role.name,
-            organization_name=user.organization.name,
-            created_at=user.created_at,
-            last_login_at=user.last_login_at
-        ))
+    for assoc in associations:
+        user = db.query(User).filter(User.id == assoc.user_id).first()
+        if user:
+            role = db.query(Role).filter(Role.id == assoc.role_id).first()
+            
+            result.append(MasterUserResponse(
+                id=user.id,
+                email=user.email,
+                full_name=user.full_name,
+                is_active=user.is_active,
+                is_verified=user.is_verified,
+                role_name=role.name if role else "USER",
+                organization_name=organization.name,
+                created_at=user.created_at,
+                last_login_at=user.last_login_at
+            ))
     
     return result
 
@@ -269,22 +318,34 @@ async def deactivate_organization(
             detail="Organization not found"
         )
     
-    # Prevent admin from deactivating their own organization
-    if current_user.organization_id == org_id:
+    # Prevent admin from deactivating an organization they belong to
+    user_assoc = db.query(UserOrganizationAssociation).filter(
+        UserOrganizationAssociation.user_id == current_user.id,
+        UserOrganizationAssociation.organization_id == org_id
+    ).first()
+    
+    if user_assoc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Cannot deactivate your own organization"
+            detail="Cannot deactivate an organization you belong to"
         )
     
     organization.is_active = False
     organization.updated_at = datetime.utcnow()
     
     # Deactivate all users in the organization EXCEPT super admins
-    users = db.query(User).filter(User.organization_id == org_id).all()
-    for user in users:
-        # Don't deactivate super admin users (role_id 1 or role_name ADMINISTRATOR)
-        if user.role_id != 1:  # Assuming role_id 1 is ADMINISTRATOR
-            user.is_active = False
+    # Get all users associated with this organization
+    user_associations = db.query(UserOrganizationAssociation).filter(
+        UserOrganizationAssociation.organization_id == org_id
+    ).all()
+    
+    for assoc in user_associations:
+        role = db.query(Role).filter(Role.id == assoc.role_id).first()
+        # Don't deactivate users with ADMINISTRATOR role
+        if role and role.name != "ADMINISTRATOR":
+            user = db.query(User).filter(User.id == assoc.user_id).first()
+            if user:
+                user.is_active = False
     
     db.commit()
     
@@ -338,7 +399,9 @@ async def update_organization(
     db.refresh(organization)
     
     # Get user count and subscription status
-    user_count = db.query(User).filter(User.organization_id == organization.id).count()
+    user_count = db.query(UserOrganizationAssociation).filter(
+        UserOrganizationAssociation.organization_id == organization.id
+    ).count()
     subscription = db.query(Subscription).filter(Subscription.organization_id == organization.id).first()
     subscription_status = subscription.status.value if subscription else "none"
     
@@ -372,10 +435,9 @@ async def delete_organization_permanently(
         )
     
     # Check if organization has active users
-    active_users = db.query(User).filter(
-        User.organization_id == org_id,
-        User.is_active == True
-    ).count()
+    active_users = db.query(UserOrganizationAssociation).filter(
+        UserOrganizationAssociation.organization_id == org_id
+    ).join(User).filter(User.is_active == True).count()
     
     if active_users > 0:
         raise HTTPException(
@@ -392,8 +454,8 @@ async def delete_organization_permanently(
     # 2. Delete subscriptions
     db.query(Subscription).filter(Subscription.organization_id == org_id).delete()
     
-    # 3. Delete users
-    db.query(User).filter(User.organization_id == org_id).delete()
+    # 3. Delete user-organization associations
+    db.query(UserOrganizationAssociation).filter(UserOrganizationAssociation.organization_id == org_id).delete()
     
     # 4. Delete organization
     db.delete(organization)
@@ -443,7 +505,9 @@ async def create_organization(
     db.refresh(organization)
     
     # Get user count and subscription status
-    user_count = db.query(User).filter(User.organization_id == organization.id).count()
+    user_count = db.query(UserOrganizationAssociation).filter(
+        UserOrganizationAssociation.organization_id == organization.id
+    ).count()
     subscription = db.query(Subscription).filter(Subscription.organization_id == organization.id).first()
     subscription_status = subscription.status.value if subscription else "none"
     
@@ -500,14 +564,21 @@ async def create_user(
         email=user_data.email,
         full_name=user_data.full_name,
         hashed_password=hashed_password,
-        organization_id=user_data.organization_id,
-        role_id=user_data.role_id,
         is_active=True,
         is_verified=True
     )
     db.add(new_user)
     db.commit()
     db.refresh(new_user)
+    
+    # Create user-organization association
+    association = UserOrganizationAssociation(
+        user_id=new_user.id,
+        organization_id=user_data.organization_id,
+        role_id=user_data.role_id
+    )
+    db.add(association)
+    db.commit()
     
     # Check if there are available licenses
     available_license = db.query(License).filter(
@@ -523,14 +594,18 @@ async def create_user(
         available_license.activated_at = datetime.utcnow()
         db.commit()
     
+    # Get role and organization info for response
+    role = db.query(Role).filter(Role.id == user_data.role_id).first()
+    org = db.query(Organization).filter(Organization.id == user_data.organization_id).first()
+    
     return MasterUserResponse(
         id=new_user.id,
         email=new_user.email,
         full_name=new_user.full_name,
         is_active=new_user.is_active,
         is_verified=new_user.is_verified,
-        role_name=new_user.role.name,
-        organization_name=new_user.organization.name,
+        role_name=role.name if role else "USER",
+        organization_name=org.name if org else "Unknown",
         created_at=new_user.created_at,
         last_login_at=new_user.last_login_at
     )
@@ -563,6 +638,7 @@ async def deactivate_user(
     db: Session = Depends(get_db)
 ):
     """Deactivate a user (Master only)."""
+    
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(
@@ -577,12 +653,18 @@ async def deactivate_user(
             detail="Cannot deactivate your own account"
         )
     
-    # Don't allow deactivating super admins
-    if user.role.name == "SUPER_ADMIN":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Cannot deactivate super admin users"
-        )
+    # Check if user is super admin
+    assoc = db.query(UserOrganizationAssociation).filter(
+        UserOrganizationAssociation.user_id == user_id
+    ).first()
+    
+    if assoc:
+        role = db.query(Role).filter(Role.id == assoc.role_id).first()
+        if role and role.name == "SUPER_ADMIN":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Cannot deactivate super admin users"
+            )
     
     user.is_active = False
     db.commit()
@@ -598,6 +680,7 @@ async def change_user_organization(
     db: Session = Depends(get_db)
 ):
     """Change user's organization (Master only)."""
+    
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(
@@ -613,14 +696,26 @@ async def change_user_organization(
             detail="Organization not found"
         )
     
-    # Don't allow moving super admins
-    if user.role.name == "SUPER_ADMIN":
+    # Get current association
+    current_assoc = db.query(UserOrganizationAssociation).filter(
+        UserOrganizationAssociation.user_id == user_id
+    ).first()
+    
+    if not current_assoc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User organization association not found"
+        )
+    
+    # Check if user is super admin
+    current_role = db.query(Role).filter(Role.id == current_assoc.role_id).first()
+    if current_role and current_role.name == "SUPER_ADMIN":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Cannot change organization for super admin users"
         )
     
-    old_org_id = user.organization_id
+    old_org_id = current_assoc.organization_id
     
     # Release license from old organization
     old_license = db.query(License).filter(
@@ -634,8 +729,8 @@ async def change_user_organization(
         old_license.user_id = None
         old_license.deactivated_at = datetime.utcnow()
     
-    # Change user organization
-    user.organization_id = new_organization_id
+    # Change user organization in association
+    current_assoc.organization_id = new_organization_id
     
     # Try to assign license in new organization
     new_license = db.query(License).filter(
@@ -664,6 +759,7 @@ async def get_user_details(
     db: Session = Depends(get_db)
 ):
     """Get user details (Master only)."""
+    
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(
@@ -671,14 +767,31 @@ async def get_user_details(
             detail="User not found"
         )
     
+    # Get user's association
+    assoc = db.query(UserOrganizationAssociation).filter(
+        UserOrganizationAssociation.user_id == user_id
+    ).first()
+    
+    role_name = "USER"
+    org_name = "Unknown"
+    
+    if assoc:
+        role = db.query(Role).filter(Role.id == assoc.role_id).first()
+        org = db.query(Organization).filter(Organization.id == assoc.organization_id).first()
+        
+        if role:
+            role_name = role.name
+        if org:
+            org_name = org.name
+    
     return MasterUserResponse(
         id=user.id,
         email=user.email,
         full_name=user.full_name,
         is_active=user.is_active,
         is_verified=user.is_verified,
-        role_name=user.role.name,
-        organization_name=user.organization.name,
+        role_name=role_name,
+        organization_name=org_name,
         created_at=user.created_at,
         last_login_at=user.last_login_at
     )
@@ -692,12 +805,28 @@ async def update_user(
     db: Session = Depends(get_db)
 ):
     """Update user details (Master only)."""
+    
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="User not found"
         )
+    
+    # Get current user's association to check role
+    current_assoc = db.query(UserOrganizationAssociation).filter(
+        UserOrganizationAssociation.user_id == user_id
+    ).first()
+    
+    if current_assoc:
+        current_role = db.query(Role).filter(Role.id == current_assoc.role_id).first()
+        
+        # Don't allow changing super admin role
+        if current_role and current_role.name == "SUPER_ADMIN":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Cannot change role of super admin users"
+            )
     
     # Check if email already exists (if changing email)
     if user_data.email and user_data.email != user.email:
@@ -716,9 +845,9 @@ async def update_user(
     if user_data.phone is not None:
         user.phone = user_data.phone
     
-    if user_data.role_id:
+    # Update role if provided
+    if user_data.role_id and current_assoc:
         # Verify role exists
-        from app.models.role import Role
         role = db.query(Role).filter(Role.id == user_data.role_id).first()
         if not role:
             raise HTTPException(
@@ -726,18 +855,29 @@ async def update_user(
                 detail="Role not found"
             )
         
-        # Don't allow changing super admin role
-        if user.role.name == "SUPER_ADMIN":
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Cannot change role of super admin users"
-            )
-        
-        user.role_id = user_data.role_id
+        # Update the association
+        current_assoc.role_id = user_data.role_id
     
     user.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(user)
+    
+    # Get updated role and organization info
+    updated_assoc = db.query(UserOrganizationAssociation).filter(
+        UserOrganizationAssociation.user_id == user_id
+    ).first()
+    
+    role_name = "USER"
+    org_name = "Unknown"
+    
+    if updated_assoc:
+        role = db.query(Role).filter(Role.id == updated_assoc.role_id).first()
+        org = db.query(Organization).filter(Organization.id == updated_assoc.organization_id).first()
+        
+        if role:
+            role_name = role.name
+        if org:
+            org_name = org.name
     
     return MasterUserResponse(
         id=user.id,
@@ -745,8 +885,8 @@ async def update_user(
         full_name=user.full_name,
         is_active=user.is_active,
         is_verified=user.is_verified,
-        role_name=user.role.name,
-        organization_name=user.organization.name,
+        role_name=role_name,
+        organization_name=org_name,
         created_at=user.created_at,
         last_login_at=user.last_login_at
     )
@@ -767,11 +907,18 @@ async def delete_user_permanently(
         )
     
     # Don't allow deleting super admins
-    if user.role.name == "SUPER_ADMIN":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Cannot delete super admin users"
-        )
+    # Check if user has ADMINISTRATOR role in any organization
+    user_assoc = db.query(UserOrganizationAssociation).filter(
+        UserOrganizationAssociation.user_id == user_id
+    ).first()
+    
+    if user_assoc:
+        role = db.query(Role).filter(Role.id == user_assoc.role_id).first()
+        if role and role.name == "ADMINISTRATOR":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Cannot delete administrator users"
+            )
     
     # Release licenses
     licenses = db.query(License).filter(License.user_id == user_id).all()
@@ -993,3 +1140,25 @@ async def get_plan_subscriptions(
         "total_subscriptions": len(result),
         "subscriptions": result
     }
+
+
+@router.get("/roles")
+async def get_all_roles(
+    current_user: User = Depends(require_super_admin),
+    db: Session = Depends(get_db)
+):
+    """Get all roles in the platform."""
+    from app.models.role import Role
+    roles = db.query(Role).all()
+    
+    result = []
+    for role in roles:
+        result.append({
+            "id": role.id,
+            "name": role.name,
+            "display_name": role.display_name,
+            "description": role.description,
+            "is_system": role.is_system
+        })
+    
+    return result

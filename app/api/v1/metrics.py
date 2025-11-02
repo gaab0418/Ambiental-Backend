@@ -5,7 +5,7 @@ from datetime import datetime
 from app.database import get_db
 from app.models.user import User
 from app.schemas.metrics import MetricsDashboard, FinancialMetrics, UsageMetrics
-from app.dependencies.auth import require_administrator
+from app.dependencies.auth import require_administrator, get_current_user
 from app.utils.metrics_collector import MetricsCollector
 
 router = APIRouter()
@@ -13,10 +13,10 @@ router = APIRouter()
 
 @router.get("/dashboard", response_model=MetricsDashboard)
 async def get_dashboard_metrics(
-    current_user: User = Depends(require_administrator),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Get dashboard metrics (ADMINISTRATOR only)."""
+    """Get dashboard metrics (authenticated users only)."""
     
     metrics = MetricsCollector.collect_dashboard_metrics(db)
     return metrics

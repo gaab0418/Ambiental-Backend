@@ -23,7 +23,8 @@ class Organization(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
-    # Relationships
-    users = relationship("User", back_populates="organization")
+    # Relationships - Many-to-many with users through association table
+    user_associations = relationship("UserOrganizationAssociation", back_populates="organization", cascade="all, delete-orphan")
+    users = relationship("User", secondary="user_organization_association", back_populates="organizations", viewonly=True)
     subscriptions = relationship("Subscription", back_populates="organization")
     licenses = relationship("License", back_populates="organization")

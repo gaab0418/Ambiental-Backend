@@ -1,10 +1,10 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models.organization import Organization
 from app.models.user import User
 from app.schemas.organization import OrganizationResponse, OrganizationFullUpdate
-from app.dependencies.auth import require_consultant
+from app.dependencies.auth import require_consultant, get_organization_from_token
 from app.utils.audit_logger import AuditLogger
 
 router = APIRouter()
@@ -44,6 +44,7 @@ async def get_organization_details(
 
 @router.put("/organizations/{org_id}", response_model=OrganizationResponse)
 async def update_organization(
+    request: Request,
     org_id: int,
     org_data: OrganizationFullUpdate,
     current_user: User = Depends(require_consultant),
@@ -94,6 +95,9 @@ async def update_organization(
     db.commit()
     db.refresh(organization)
     
+    # Get organization_id from token
+    current_org_id = get_organization_from_token(request)
+    
     # Log audit
     AuditLogger.log_update(
         db=db,
@@ -101,7 +105,7 @@ async def update_organization(
         entity_id=organization.id,
         changes=changes,
         user_id=current_user.id,
-        organization_id=current_user.organization_id
+        organization_id=current_org_id
     )
     
     return organization

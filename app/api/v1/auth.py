@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta, timezone
@@ -13,7 +13,12 @@ from app.core.security import (
     verify_password, get_password_hash,
     create_access_token, create_refresh_token, verify_token
 )
-from app.schemas.auth import Token, UserRegister, UserResponse, RefreshTokenRequest, UserSelfUpdateRequest, UserProfileUpdate, PasswordChangeRequest
+from app.schemas.auth import (
+    Token, UserRegister, UserResponse, RefreshTokenRequest, 
+    UserSelfUpdateRequest, UserProfileUpdate, PasswordChangeRequest,
+    OrganizationSelection, OrganizationSelectionRequest
+)
+from app.models.user_organization_association import UserOrganizationAssociation
 from app.dependencies.auth import get_current_user
 from app.config import settings
 
@@ -35,7 +40,11 @@ async def login_for_access_token(
     form_data: OAuth2PasswordRequestForm = Depends(),
     db: Session = Depends(get_db)
 ):
-    """Login endpoint for OAuth2 password flow."""
+    """Login endpoint for OAuth2 password flow.
+    
+    Returns a list of organizations if user belongs to multiple organizations.
+    Client should then call /select-organization with the chosen organization_id.
+    """
     user = authenticate_user(db, form_data.username, form_data.password)
     if not user:
         raise HTTPException(
@@ -56,10 +65,8 @@ async def login_for_access_token(
     try:
         db.commit()
         db.refresh(user)
-        # Verify the update
         if user.last_login_at != login_time:
             db.rollback()
-            # Try alternative approach
             db.query(User).filter(User.id == user.id).update({"last_login_at": login_time})
             db.commit()
             db.refresh(user)
@@ -67,13 +74,46 @@ async def login_for_access_token(
         db.rollback()
         raise e
     
-    # Create tokens
+    # Get all organizations the user belongs to
+    user_orgs = db.query(UserOrganizationAssociation).filter(
+        UserOrganizationAssociation.user_id == user.id
+    ).all()
+    
+    if not user_orgs:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="User is not associated with any organization"
+        )
+    
+    # Determine which organization to use
+    selected_assoc = None
+    
+    # If user has multiple organizations, select the last used one (if exists and still accessible)
+    if len(user_orgs) > 1 and user.last_organization_id:
+        # Try to use the last organization if user still has access
+        for assoc in user_orgs:
+            if assoc.organization_id == user.last_organization_id:
+                selected_assoc = assoc
+                break
+    
+    # If no last organization or not found, use the first one
+    if selected_assoc is None:
+        selected_assoc = user_orgs[0]
+    
+    # Get the role for the selected organization
+    role = db.query(Role).filter(Role.id == selected_assoc.role_id).first()
+    
+    # Update last_organization_id for next time
+    user.last_organization_id = selected_assoc.organization_id
+    db.commit()
+    
+    # Generate full access and refresh tokens
     access_token_expires = timedelta(minutes=settings.access_token_expire_minutes)
     access_token = create_access_token(
         data={
             "sub": str(user.id),
-            "organization_id": user.organization_id,
-            "role": user.role.name
+            "organization_id": selected_assoc.organization_id,
+            "role": role.name if role else "USER"
         },
         expires_delta=access_token_expires
     )
@@ -81,15 +121,87 @@ async def login_for_access_token(
     refresh_token = create_refresh_token(
         data={
             "sub": str(user.id),
-            "organization_id": user.organization_id
+            "organization_id": selected_assoc.organization_id
         }
     )
     
-    return {
-        "access_token": access_token,
-        "refresh_token": refresh_token,
-        "token_type": "bearer"
-    }
+    # If user has multiple organizations, include the list for easy switching
+    available_orgs = []
+    if len(user_orgs) > 1:
+        for assoc in user_orgs:
+            org = db.query(Organization).filter(Organization.id == assoc.organization_id).first()
+            role_obj = db.query(Role).filter(Role.id == assoc.role_id).first()
+            if org and role_obj:
+                available_orgs.append(OrganizationSelection(
+                    id=org.id,
+                    name=org.name,
+                    cnpj_cpf=org.cnpj_cpf,
+                    role_name=role_obj.name
+                ))
+    
+    return Token(
+        access_token=access_token,
+        refresh_token=refresh_token,
+        token_type="bearer",
+        requires_org_selection=False,
+        available_organizations=available_orgs
+    )
+
+
+@router.post("/select-organization", response_model=Token)
+async def select_organization(
+    org_selection: OrganizationSelectionRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Select an organization after initial authentication.
+    
+    This endpoint should be called after /token returns requires_org_selection=True.
+    """
+    # Verify user has access to the selected organization
+    assoc = db.query(UserOrganizationAssociation).filter(
+        UserOrganizationAssociation.user_id == current_user.id,
+        UserOrganizationAssociation.organization_id == org_selection.organization_id
+    ).first()
+    
+    if not assoc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User does not have access to this organization"
+        )
+    
+    # Get the role for this organization
+    role = db.query(Role).filter(Role.id == assoc.role_id).first()
+    
+    # Update last_organization_id for next login
+    current_user.last_organization_id = org_selection.organization_id
+    db.commit()
+    
+    # Create full access tokens with organization context
+    access_token_expires = timedelta(minutes=settings.access_token_expire_minutes)
+    access_token = create_access_token(
+        data={
+            "sub": str(current_user.id),
+            "organization_id": org_selection.organization_id,
+            "role": role.name if role else "USER"
+        },
+        expires_delta=access_token_expires
+    )
+    
+    refresh_token = create_refresh_token(
+        data={
+            "sub": str(current_user.id),
+            "organization_id": org_selection.organization_id
+        }
+    )
+    
+    return Token(
+        access_token=access_token,
+        refresh_token=refresh_token,
+        token_type="bearer",
+        requires_org_selection=False,
+        available_organizations=[]
+    )
 
 
 @router.post("/register", response_model=Token)
@@ -185,13 +297,20 @@ async def register_new_organization(
         email=user_data.email,
         full_name=user_data.full_name,
         hashed_password=hashed_password,
-        organization_id=organization.id,
-        role_id=admin_role.id,
         is_verified=True  # Auto-verify for registration
     )
     db.add(admin_user)
     db.commit()
     db.refresh(admin_user)
+    
+    # Create user-organization association
+    user_org_assoc = UserOrganizationAssociation(
+        user_id=admin_user.id,
+        organization_id=organization.id,
+        role_id=admin_role.id
+    )
+    db.add(user_org_assoc)
+    db.commit()
     
     # Create initial licenses
     for i in range(trial_plan.max_users):
@@ -209,7 +328,7 @@ async def register_new_organization(
     access_token = create_access_token(
         data={
             "sub": str(admin_user.id),
-            "organization_id": admin_user.organization_id,
+            "organization_id": organization.id,
             "role": admin_role.name
         },
         expires_delta=access_token_expires
@@ -218,15 +337,17 @@ async def register_new_organization(
     refresh_token = create_refresh_token(
         data={
             "sub": str(admin_user.id),
-            "organization_id": admin_user.organization_id
+            "organization_id": organization.id
         }
     )
     
-    return {
-        "access_token": access_token,
-        "refresh_token": refresh_token,
-        "token_type": "bearer"
-    }
+    return Token(
+        access_token=access_token,
+        refresh_token=refresh_token,
+        token_type="bearer",
+        requires_org_selection=False,
+        available_organizations=[]
+    )
 
 
 @router.post("/refresh", response_model=Token)
@@ -243,6 +364,8 @@ async def refresh_access_token(
         )
     
     user_id = payload.get("sub")
+    organization_id = payload.get("organization_id")
+    
     user = db.query(User).filter(User.id == int(user_id)).first()
     if not user or not user.is_active:
         raise HTTPException(
@@ -250,13 +373,27 @@ async def refresh_access_token(
             detail="User not found or inactive"
         )
     
+    # Verify user still has access to this organization
+    assoc = db.query(UserOrganizationAssociation).filter(
+        UserOrganizationAssociation.user_id == user.id,
+        UserOrganizationAssociation.organization_id == organization_id
+    ).first()
+    
+    if not assoc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User no longer has access to this organization"
+        )
+    
+    role = db.query(Role).filter(Role.id == assoc.role_id).first()
+    
     # Create new access token
     access_token_expires = timedelta(minutes=settings.access_token_expire_minutes)
     access_token = create_access_token(
         data={
             "sub": str(user.id),
-            "organization_id": user.organization_id,
-            "role": user.role.name
+            "organization_id": organization_id,
+            "role": role.name if role else "USER"
         },
         expires_delta=access_token_expires
     )
@@ -265,42 +402,85 @@ async def refresh_access_token(
     refresh_token = create_refresh_token(
         data={
             "sub": str(user.id),
-            "organization_id": user.organization_id
+            "organization_id": organization_id
         }
     )
     
-    return {
-        "access_token": access_token,
-        "refresh_token": refresh_token,
-        "token_type": "bearer"
-    }
+    return Token(
+        access_token=access_token,
+        refresh_token=refresh_token,
+        token_type="bearer",
+        requires_org_selection=False,
+        available_organizations=[]
+    )
 
 
 @router.get("/me", response_model=UserResponse)
 async def get_current_user_info(
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Get current user information."""
-    # Load related data
-    user_with_relations = db.query(User).filter(User.id == current_user.id).first()
+    """Get current user information with current session context."""
+    # Extract organization_id from token
+    authorization = request.headers.get("Authorization", "")
+    current_org_id = None
+    current_role_name = None
+    current_org_name = None
     
-    # Create response with populated fields
+    if authorization.startswith("Bearer "):
+        token = authorization.split(" ")[1]
+        try:
+            payload = verify_token(token, "access")
+            if payload:
+                current_org_id = payload.get("organization_id")
+                current_role_name = payload.get("role")
+                
+                if current_org_id:
+                    org = db.query(Organization).filter(Organization.id == current_org_id).first()
+                    if org:
+                        current_org_name = org.name
+        except:
+            pass
+    
+    # Get all organizations the user belongs to
+    user_orgs = db.query(UserOrganizationAssociation).filter(
+        UserOrganizationAssociation.user_id == current_user.id
+    ).all()
+    
+    organizations_list = []
+    is_system_admin = False
+    
+    for assoc in user_orgs:
+        org = db.query(Organization).filter(Organization.id == assoc.organization_id).first()
+        role = db.query(Role).filter(Role.id == assoc.role_id).first()
+        if org and role:
+            organizations_list.append(OrganizationSelection(
+                id=org.id,
+                name=org.name,
+                cnpj_cpf=org.cnpj_cpf,
+                role_name=role.name
+            ))
+            # Check if user has ADMINISTRATOR role in any organization
+            if role.name == "ADMINISTRATOR":
+                is_system_admin = True
+    
     response_data = {
-        "id": user_with_relations.id,
-        "email": user_with_relations.email,
-        "full_name": user_with_relations.full_name,
-        "is_active": user_with_relations.is_active,
-        "is_verified": user_with_relations.is_verified,
-        "organization_id": user_with_relations.organization_id,
-        "role_id": user_with_relations.role_id,
-        "profile_image_url": user_with_relations.profile_image_url,
-        "phone": user_with_relations.phone,
-        "bio": user_with_relations.bio,
-        "created_at": user_with_relations.created_at,
-        "last_login_at": user_with_relations.last_login_at,
-        "role_name": user_with_relations.role.name if user_with_relations.role else None,
-        "organization_name": user_with_relations.organization.name if user_with_relations.organization else None
+        "id": current_user.id,
+        "email": current_user.email,
+        "full_name": current_user.full_name,
+        "is_active": current_user.is_active,
+        "is_verified": current_user.is_verified,
+        "profile_image_url": current_user.profile_image_url,
+        "phone": current_user.phone,
+        "bio": current_user.bio,
+        "created_at": current_user.created_at,
+        "last_login_at": current_user.last_login_at,
+        "current_organization_id": current_org_id,
+        "current_role_name": current_role_name,
+        "current_organization_name": current_org_name,
+        "organizations": organizations_list,
+        "is_system_admin": is_system_admin
     }
     
     return UserResponse(**response_data)
@@ -349,12 +529,26 @@ async def update_current_user(
 
 @router.put("/me/profile", response_model=UserResponse)
 async def update_user_profile(
+    request: Request,
     profile_data: UserProfileUpdate,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """Update user profile with extended fields."""
     from app.utils.audit_logger import AuditLogger
+    
+    # Get current organization from token
+    authorization = request.headers.get("Authorization", "")
+    current_org_id = None
+    
+    if authorization.startswith("Bearer "):
+        token = authorization.split(" ")[1]
+        try:
+            payload = verify_token(token, "access")
+            if payload:
+                current_org_id = payload.get("organization_id")
+        except:
+            pass
     
     # Track changes for audit
     changes = {}
@@ -382,26 +576,98 @@ async def update_user_profile(
     db.refresh(current_user)
     
     # Log audit
-    AuditLogger.log_update(
-        db=db,
-        entity_type="User",
-        entity_id=current_user.id,
-        changes=changes,
-        user_id=current_user.id,
-        organization_id=current_user.organization_id
+    if current_org_id:
+        AuditLogger.log_update(
+            db=db,
+            entity_type="User",
+            entity_id=current_user.id,
+            changes=changes,
+            user_id=current_user.id,
+            organization_id=current_org_id
+        )
+    
+    # Return updated user info
+    return await get_current_user_info(request, current_user, db)
+
+
+@router.post("/switch-organization", response_model=Token)
+async def switch_organization(
+    org_selection: OrganizationSelectionRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Switch to a different organization after authentication.
+    
+    This endpoint allows users with multiple organizations to switch between them.
+    """
+    # Verify user has access to the selected organization
+    assoc = db.query(UserOrganizationAssociation).filter(
+        UserOrganizationAssociation.user_id == current_user.id,
+        UserOrganizationAssociation.organization_id == org_selection.organization_id
+    ).first()
+    
+    if not assoc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User does not have access to this organization"
+        )
+    
+    # Get the role for this organization
+    role = db.query(Role).filter(Role.id == assoc.role_id).first()
+    
+    # Update last_organization_id for next login
+    current_user.last_organization_id = org_selection.organization_id
+    db.commit()
+    
+    # Create new access tokens with the new organization context
+    access_token_expires = timedelta(minutes=settings.access_token_expire_minutes)
+    access_token = create_access_token(
+        data={
+            "sub": str(current_user.id),
+            "organization_id": org_selection.organization_id,
+            "role": role.name if role else "USER"
+        },
+        expires_delta=access_token_expires
     )
     
-    return current_user
+    refresh_token = create_refresh_token(
+        data={
+            "sub": str(current_user.id),
+            "organization_id": org_selection.organization_id
+        }
+    )
+    
+    return Token(
+        access_token=access_token,
+        refresh_token=refresh_token,
+        token_type="bearer",
+        requires_org_selection=False,
+        available_organizations=[]
+    )
 
 
 @router.put("/me/password", response_model=dict)
 async def change_password(
+    request: Request,
     password_data: PasswordChangeRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """Change user password."""
     from app.utils.audit_logger import AuditLogger
+    
+    # Get current organization from token
+    authorization = request.headers.get("Authorization", "")
+    current_org_id = None
+    
+    if authorization.startswith("Bearer "):
+        token = authorization.split(" ")[1]
+        try:
+            payload = verify_token(token, "access")
+            if payload:
+                current_org_id = payload.get("organization_id")
+        except:
+            pass
     
     # Verify old password
     if not verify_password(password_data.old_password, current_user.hashed_password):
@@ -423,13 +689,14 @@ async def change_password(
     db.commit()
     
     # Log audit
-    AuditLogger.log_update(
-        db=db,
-        entity_type="User",
-        entity_id=current_user.id,
-        changes={"action": "password_changed"},
-        user_id=current_user.id,
-        organization_id=current_user.organization_id
-    )
+    if current_org_id:
+        AuditLogger.log_update(
+            db=db,
+            entity_type="User",
+            entity_id=current_user.id,
+            changes={"action": "password_changed"},
+            user_id=current_user.id,
+            organization_id=current_org_id
+        )
     
     return {"message": "Password changed successfully"}

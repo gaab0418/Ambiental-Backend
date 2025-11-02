@@ -19,7 +19,7 @@ app = FastAPI(
 # CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.allowed_origins,
+    allow_origins=["*"],  # Allow all origins for development
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -61,8 +61,8 @@ async def startup_event():
     # Validate database connection and tables, exit if not ready
     validate_database_or_exit()
     
-    print("🚀 Ambiental SaaS API iniciada!")
-    print("📊 Sistema configurado e funcionando")
+    print("[OK] Ambiental SaaS API iniciada!")
+    print("[OK] Sistema configurado e funcionando")
 
 
 @app.get("/")

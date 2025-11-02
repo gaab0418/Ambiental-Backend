@@ -17,4 +17,5 @@ class Role(Base):
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
     # Relationships
-    users = relationship("User", back_populates="role")
+    # Note: Role is now connected to users through UserOrganizationAssociation
+    # users = relationship("User", back_populates="role")  # Removed - role is now per organization

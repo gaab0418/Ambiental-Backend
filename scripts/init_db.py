@@ -9,7 +9,7 @@ sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 
 from sqlalchemy.orm import Session
 from app.database import SessionLocal, engine
-from app.models import Organization, User, Role, Plan, Subscription, License
+from app.models import Organization, User, Role, Plan, Subscription, License, UserOrganizationAssociation
 from app.core.security import get_password_hash
 from datetime import datetime, timedelta
 
@@ -262,14 +262,22 @@ def create_admin_org_and_user(db: Session, admin_email: str, admin_full_name: st
         email=admin_email,
         full_name=admin_full_name,
         hashed_password=get_password_hash(admin_password),
-        organization_id=admin_org.id,
-        role_id=admin_role.id,
         is_active=True,
         is_verified=True
     )
     db.add(admin_user)
     db.commit()
     db.refresh(admin_user)
+    
+    # Create user-organization association
+    user_org_assoc = UserOrganizationAssociation(
+        user_id=admin_user.id,
+        organization_id=admin_org.id,
+        role_id=admin_role.id
+    )
+    db.add(user_org_assoc)
+    db.commit()
+    
     print(f"✅ Usuário administrador criado: {admin_email}")
 
     return admin_org, admin_user

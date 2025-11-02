@@ -1,18 +1,20 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session
-from typing import Optional
+from typing import Optional, List
 from app.database import get_db
 from app.models.document_template import DocumentTemplate
 from app.models.user import User
 from app.schemas.template import TemplateCreate, TemplateUpdate, TemplateResponse
-from app.dependencies.auth import get_current_active_user, require_consultant, require_administrator
+from app.dependencies.auth import get_current_active_user, require_consultant, require_administrator, get_organization_from_token
 from app.utils.audit_logger import AuditLogger
+from app.utils.placeholders import get_all_placeholders, PlaceholderCategory
 
 router = APIRouter()
 
 
 @router.get("", response_model=dict)
 async def get_templates(
+    request: Request,
     is_global: Optional[str] = Query(None),
     is_active: Optional[str] = Query("true"),
     organization_id: Optional[str] = Query(None),
@@ -23,6 +25,9 @@ async def get_templates(
     db: Session = Depends(get_db)
 ):
     """Get templates with filters and pagination."""
+    
+    # Get current organization from token
+    current_user_org_id = get_organization_from_token(request)
     
     query = db.query(DocumentTemplate)
     
@@ -40,17 +45,34 @@ async def get_templates(
     org_id_filter = None
     if organization_id:
         if organization_id.lower() == 'me':
-            org_id_filter = current_user.organization_id
+            org_id_filter = current_user_org_id
         else:
             try:
                 org_id_filter = int(organization_id)
                 # Check permission if accessing another org's data
-                if org_id_filter != current_user.organization_id:
-                    if current_user.role.name not in ["CONSULTANT", "ADMINISTRATOR"]:
-                        raise HTTPException(
-                            status_code=403,
-                            detail="Not authorized to access other organization's templates"
-                        )
+                if org_id_filter != current_user_org_id:
+                    # Check if user has CONSULTANT or ADMINISTRATOR role in current org
+                    from app.models.user_organization_association import UserOrganizationAssociation
+                    from app.models.role import Role
+                    
+                    if current_user_org_id:
+                        assoc = db.query(UserOrganizationAssociation).filter(
+                            UserOrganizationAssociation.user_id == current_user.id,
+                            UserOrganizationAssociation.organization_id == current_user_org_id
+                        ).first()
+                        
+                        if assoc:
+                            role = db.query(Role).filter(Role.id == assoc.role_id).first()
+                            if role and role.name not in ["CONSULTANT", "ADMINISTRATOR"]:
+                                raise HTTPException(
+                                    status_code=403,
+                                    detail="Not authorized to access other organization's templates"
+                                )
+                        else:
+                            raise HTTPException(
+                                status_code=403,
+                                detail="Not authorized to access other organization's templates"
+                            )
             except ValueError:
                 raise HTTPException(status_code=400, detail="Invalid organization_id")
     
@@ -76,10 +98,14 @@ async def get_templates(
         query = query.filter(DocumentTemplate.organization_id == org_id_filter)
     elif not is_global_bool:
         # If not filtering for global templates, show user's organization templates + global
-        query = query.filter(
-            (DocumentTemplate.organization_id == current_user.organization_id) |
-            (DocumentTemplate.is_global == True)
-        )
+        if current_user_org_id:
+            query = query.filter(
+                (DocumentTemplate.organization_id == current_user_org_id) |
+                (DocumentTemplate.is_global == True)
+            )
+        else:
+            # No org context, show only global templates
+            query = query.filter(DocumentTemplate.is_global == True)
     
     if user_id_filter:
         query = query.filter(DocumentTemplate.created_by_user_id == user_id_filter)
@@ -123,13 +149,36 @@ async def get_templates(
     }
 
 
+@router.get("/placeholders", response_model=List[PlaceholderCategory])
+async def get_template_placeholders(
+    current_user: User = Depends(get_current_active_user)
+):
+    """Get all available placeholders for document templates.
+    
+    Returns a list of placeholder categories with their available placeholders.
+    Each placeholder includes:
+    - name: The placeholder name to use in templates (e.g., "user.full_name")
+    - description: What the placeholder represents
+    - example: An example value
+    - category: The category it belongs to
+    
+    Usage in templates: {{ placeholder_name }}
+    Example: {{ user.full_name }} will be replaced with the user's full name.
+    """
+    return get_all_placeholders()
+
+
 @router.get("/{template_id}", response_model=TemplateResponse)
 async def get_template(
+    request: Request,
     template_id: int,
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
     """Get template by ID."""
+    
+    # Get current organization from token
+    current_user_org_id = get_organization_from_token(request)
     
     template = db.query(DocumentTemplate).filter(DocumentTemplate.id == template_id).first()
     
@@ -137,7 +186,7 @@ async def get_template(
         raise HTTPException(status_code=404, detail="Template not found")
     
     # Check access permissions
-    if not template.is_global and template.organization_id != current_user.organization_id:
+    if not template.is_global and template.organization_id != current_user_org_id:
         raise HTTPException(status_code=403, detail="Not authorized to access this template")
     
     return template
@@ -145,14 +194,34 @@ async def get_template(
 
 @router.post("", response_model=TemplateResponse)
 async def create_template(
+    request: Request,
     template_data: TemplateCreate,
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
     """Create new template (CONSULTANT+ can create global templates)."""
     
+    # Get current organization from token
+    current_user_org_id = get_organization_from_token(request)
+    
+    # Get user's role in current organization
+    from app.models.user_organization_association import UserOrganizationAssociation
+    from app.models.role import Role
+    
+    user_role_name = None
+    if current_user_org_id:
+        assoc = db.query(UserOrganizationAssociation).filter(
+            UserOrganizationAssociation.user_id == current_user.id,
+            UserOrganizationAssociation.organization_id == current_user_org_id
+        ).first()
+        
+        if assoc:
+            role = db.query(Role).filter(Role.id == assoc.role_id).first()
+            if role:
+                user_role_name = role.name
+    
     # Check if user can create global templates
-    if template_data.is_global and current_user.role.name not in ["CONSULTANT", "ADMINISTRATOR"]:
+    if template_data.is_global and user_role_name not in ["CONSULTANT", "ADMINISTRATOR"]:
         raise HTTPException(
             status_code=403,
             detail="Only CONSULTANT and ADMINISTRATOR can create global templates"
@@ -164,7 +233,7 @@ async def create_template(
         description=template_data.description,
         content=template_data.content,
         created_by_user_id=current_user.id,
-        organization_id=None if template_data.is_global else current_user.organization_id,
+        organization_id=None if template_data.is_global else current_user_org_id,
         is_global=template_data.is_global,
         is_active=True
     )
@@ -174,20 +243,22 @@ async def create_template(
     db.refresh(template)
     
     # Log audit
-    AuditLogger.log_create(
-        db=db,
-        entity_type="DocumentTemplate",
-        entity_id=template.id,
-        user_id=current_user.id,
-        organization_id=current_user.organization_id,
-        changes={"name": template.name, "is_global": template.is_global}
-    )
+    if current_user_org_id:
+        AuditLogger.log_create(
+            db=db,
+            entity_type="DocumentTemplate",
+            entity_id=template.id,
+            user_id=current_user.id,
+            organization_id=current_user_org_id,
+            changes={"name": template.name, "is_global": template.is_global}
+        )
     
     return template
 
 
 @router.put("/{template_id}", response_model=TemplateResponse)
 async def update_template(
+    request: Request,
     template_id: int,
     template_data: TemplateUpdate,
     current_user: User = Depends(get_current_active_user),
@@ -195,14 +266,33 @@ async def update_template(
 ):
     """Update template (creator or CONSULTANT+)."""
     
+    # Get current organization from token
+    current_user_org_id = get_organization_from_token(request)
+    
     template = db.query(DocumentTemplate).filter(DocumentTemplate.id == template_id).first()
     
     if not template:
         raise HTTPException(status_code=404, detail="Template not found")
     
+    # Get user's role in current organization
+    from app.models.user_organization_association import UserOrganizationAssociation
+    from app.models.role import Role
+    
+    user_role_name = None
+    if current_user_org_id:
+        assoc = db.query(UserOrganizationAssociation).filter(
+            UserOrganizationAssociation.user_id == current_user.id,
+            UserOrganizationAssociation.organization_id == current_user_org_id
+        ).first()
+        
+        if assoc:
+            role = db.query(Role).filter(Role.id == assoc.role_id).first()
+            if role:
+                user_role_name = role.name
+    
     # Check permissions
     is_creator = template.created_by_user_id == current_user.id
-    is_consultant_or_admin = current_user.role.name in ["CONSULTANT", "ADMINISTRATOR"]
+    is_consultant_or_admin = user_role_name in ["CONSULTANT", "ADMINISTRATOR"]
     
     if not (is_creator or is_consultant_or_admin):
         raise HTTPException(status_code=403, detail="Not authorized to update this template")
@@ -229,52 +319,93 @@ async def update_template(
     db.refresh(template)
     
     # Log audit
-    AuditLogger.log_update(
-        db=db,
-        entity_type="DocumentTemplate",
-        entity_id=template.id,
-        changes=changes,
-        user_id=current_user.id,
-        organization_id=current_user.organization_id
-    )
+    if current_user_org_id:
+        AuditLogger.log_update(
+            db=db,
+            entity_type="DocumentTemplate",
+            entity_id=template.id,
+            changes=changes,
+            user_id=current_user.id,
+            organization_id=current_user_org_id
+        )
     
     return template
 
 
 @router.delete("/{template_id}")
 async def delete_template(
+    request: Request,
     template_id: int,
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
     """Delete template (creator or ADMINISTRATOR)."""
     
+    # Get current organization from token
+    current_user_org_id = get_organization_from_token(request)
+    
     template = db.query(DocumentTemplate).filter(DocumentTemplate.id == template_id).first()
     
     if not template:
         raise HTTPException(status_code=404, detail="Template not found")
     
+    # Get user's role in current organization
+    from app.models.user_organization_association import UserOrganizationAssociation
+    from app.models.role import Role
+    
+    user_role_name = None
+    if current_user_org_id:
+        assoc = db.query(UserOrganizationAssociation).filter(
+            UserOrganizationAssociation.user_id == current_user.id,
+            UserOrganizationAssociation.organization_id == current_user_org_id
+        ).first()
+        
+        if assoc:
+            role = db.query(Role).filter(Role.id == assoc.role_id).first()
+            if role:
+                user_role_name = role.name
+    
     # Check permissions
     is_creator = template.created_by_user_id == current_user.id
-    is_administrator = current_user.role.name == "ADMINISTRATOR"
+    is_administrator = user_role_name == "ADMINISTRATOR"
     
     if not (is_creator or is_administrator):
         raise HTTPException(status_code=403, detail="Not authorized to delete this template")
     
     # Log audit before deletion
-    AuditLogger.log_delete(
-        db=db,
-        entity_type="DocumentTemplate",
-        entity_id=template.id,
-        user_id=current_user.id,
-        organization_id=current_user.organization_id,
-        changes={"name": template.name, "is_global": template.is_global}
-    )
+    if current_user_org_id:
+        AuditLogger.log_delete(
+            db=db,
+            entity_type="DocumentTemplate",
+            entity_id=template.id,
+            user_id=current_user.id,
+            organization_id=current_user_org_id,
+            changes={"name": template.name, "is_global": template.is_global}
+        )
     
     db.delete(template)
     db.commit()
     
     return {"message": "Template deleted successfully"}
+
+
+@router.get("/placeholders", response_model=List[PlaceholderCategory])
+async def get_template_placeholders(
+    current_user: User = Depends(get_current_active_user)
+):
+    """Get all available placeholders for document templates.
+    
+    Returns a list of placeholder categories with their available placeholders.
+    Each placeholder includes:
+    - name: The placeholder name to use in templates (e.g., "user.full_name")
+    - description: What the placeholder represents
+    - example: An example value
+    - category: The category it belongs to
+    
+    Usage in templates: {{ placeholder_name }}
+    Example: {{ user.full_name }} will be replaced with the user's full name.
+    """
+    return get_all_placeholders()
 
 
 

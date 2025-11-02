@@ -3,10 +3,23 @@ from typing import Optional
 from datetime import datetime
 
 
+class OrganizationSelection(BaseModel):
+    """Organization details for selection after login."""
+    id: int
+    name: str
+    cnpj_cpf: str
+    role_name: str
+    
+    class Config:
+        from_attributes = True
+
+
 class Token(BaseModel):
     access_token: str
     refresh_token: str
     token_type: str = "bearer"
+    requires_org_selection: bool = False
+    available_organizations: list[OrganizationSelection] = []
 
 
 class TokenData(BaseModel):
@@ -32,23 +45,33 @@ class RefreshTokenRequest(BaseModel):
     refresh_token: str
 
 
+class OrganizationSelectionRequest(BaseModel):
+    """Request to select an organization after initial authentication."""
+    organization_id: int
+
+
 class UserResponse(BaseModel):
     id: int
     email: str
     full_name: str
     is_active: bool
     is_verified: bool
-    organization_id: int
-    role_id: int
     profile_image_url: Optional[str] = None
     phone: Optional[str] = None
     bio: Optional[str] = None
     created_at: datetime
     last_login_at: Optional[datetime] = None
     
-    # Related data (optional, populated in responses)
-    role_name: Optional[str] = None
-    organization_name: Optional[str] = None
+    # Current session context (from token)
+    current_organization_id: Optional[int] = None
+    current_role_name: Optional[str] = None
+    current_organization_name: Optional[str] = None
+    
+    # All organizations the user belongs to
+    organizations: list[OrganizationSelection] = []
+    
+    # Flag indicating if user is a system administrator
+    is_system_admin: bool = False
 
     class Config:
         from_attributes = True

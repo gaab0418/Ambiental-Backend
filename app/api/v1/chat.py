@@ -11,6 +11,7 @@ from app.schemas.chat import (
     ChatMessageCreate, ChatMessageResponse, ChatMessagesResponse
 )
 from app.dependencies.auth import get_current_active_user
+from app.models.user_organization_association import UserOrganizationAssociation
 from app.utils.audit_logger import AuditLogger
 
 router = APIRouter()
@@ -45,10 +46,21 @@ async def create_chat_thread(
             detail="Title must be 120 characters or less"
         )
     
+    # Get user's current organization
+    user_assoc = db.query(UserOrganizationAssociation).filter(
+        UserOrganizationAssociation.user_id == current_user.id
+    ).first()
+    
+    if not user_assoc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="User not associated with any organization"
+        )
+    
     # Create thread
     thread = ChatThread(
         user_id=current_user.id,
-        organization_id=current_user.organization_id,
+        organization_id=user_assoc.organization_id,
         title=thread_data.title or "New Chat",
         is_active=True
     )
@@ -63,7 +75,7 @@ async def create_chat_thread(
         entity_type="ChatThread",
         entity_id=thread.id,
         user_id=current_user.id,
-        organization_id=current_user.organization_id,
+        organization_id=user_assoc.organization_id,
         changes={"title": thread.title}
     )
     
@@ -153,13 +165,18 @@ async def send_chat_message(
     db.commit()
     db.refresh(user_message)
     
+    # Get user's organization for audit
+    user_assoc = db.query(UserOrganizationAssociation).filter(
+        UserOrganizationAssociation.user_id == current_user.id
+    ).first()
+    
     # Log audit
     AuditLogger.log_create(
         db=db,
         entity_type="ChatMessage",
         entity_id=user_message.id,
         user_id=current_user.id,
-        organization_id=current_user.organization_id,
+        organization_id=user_assoc.organization_id if user_assoc else None,
         changes={"role": "USER", "thread_id": thread_id}
     )
     
@@ -183,7 +200,7 @@ async def send_chat_message(
         entity_type="ChatMessage",
         entity_id=assistant_message.id,
         user_id=current_user.id,
-        organization_id=current_user.organization_id,
+        organization_id=user_assoc.organization_id if user_assoc else None,
         changes={"role": "ASSISTANT", "thread_id": thread_id}
     )
     
@@ -219,13 +236,18 @@ async def delete_chat_thread(
     thread.is_active = False
     db.commit()
     
+    # Get user's organization for audit
+    user_assoc = db.query(UserOrganizationAssociation).filter(
+        UserOrganizationAssociation.user_id == current_user.id
+    ).first()
+    
     # Log audit
     AuditLogger.log_delete(
         db=db,
         entity_type="ChatThread",
         entity_id=thread.id,
         user_id=current_user.id,
-        organization_id=current_user.organization_id,
+        organization_id=user_assoc.organization_id if user_assoc else None,
         changes={"title": thread.title}
     )
     

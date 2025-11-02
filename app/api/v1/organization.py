@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.orm import Session
 from typing import List
 from datetime import datetime
@@ -8,24 +8,35 @@ from app.models.organization import Organization
 from app.models.role import Role
 from app.models.license import License, LicenseStatus
 from app.models.subscription import Subscription
+from app.models.user_organization_association import UserOrganizationAssociation
 from app.core.security import get_password_hash
 from app.schemas.organization import (
     OrganizationResponse, UserInviteRequest, UserInviteResponse, RoleResponse,
     UserUpdateRequest, OrganizationUpdateRequest, UserRoleChangeRequest
 )
-from app.dependencies.auth import require_manager_or_admin
+from app.dependencies.auth import require_role_in_current_org, get_organization_from_token
 
 router = APIRouter()
 
 
 @router.get("/me", response_model=OrganizationResponse)
 async def get_organization_info(
-    current_user: User = Depends(require_manager_or_admin),
+    request: Request,
+    current_user: User = Depends(require_role_in_current_org(["MANAGER", "ADMIN"])),
     db: Session = Depends(get_db)
 ):
     """Get current organization information."""
+    # Get current organization from token
+    current_user_org_id = get_organization_from_token(request)
+    
+    if not current_user_org_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Organization context required"
+        )
+    
     organization = db.query(Organization).filter(
-        Organization.id == current_user.organization_id
+        Organization.id == current_user_org_id
     ).first()
     
     if not organization:
@@ -39,20 +50,34 @@ async def get_organization_info(
 
 @router.get("/users", response_model=List[UserInviteResponse])
 async def get_organization_users(
-    current_user: User = Depends(require_manager_or_admin),
+    request: Request,
+    current_user: User = Depends(require_role_in_current_org(["MANAGER", "ADMIN"])),
     db: Session = Depends(get_db)
 ):
     """Get all users from the current organization."""
-    users = db.query(User).filter(
-        User.organization_id == current_user.organization_id
+    # Get current organization from token
+    current_user_org_id = get_organization_from_token(request)
+    
+    if not current_user_org_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Organization context required"
+        )
+    
+    # Get all users associated with this organization
+    user_ids = db.query(UserOrganizationAssociation.user_id).filter(
+        UserOrganizationAssociation.organization_id == current_user_org_id
     ).all()
+    
+    user_ids_list = [uid[0] for uid in user_ids]
+    users = db.query(User).filter(User.id.in_(user_ids_list)).all()
     
     return users
 
 
 @router.get("/roles", response_model=List[RoleResponse])
 async def get_available_roles(
-    current_user: User = Depends(require_manager_or_admin),
+    current_user: User = Depends(require_role_in_current_org(["MANAGER", "ADMIN"])),
     db: Session = Depends(get_db)
 ):
     """Get available roles for user assignment."""
@@ -63,19 +88,77 @@ async def get_available_roles(
 
 @router.post("/users/invite", response_model=UserInviteResponse)
 async def invite_user(
+    request: Request,
     user_data: UserInviteRequest,
-    current_user: User = Depends(require_manager_or_admin),
+    current_user: User = Depends(require_role_in_current_org(["MANAGER", "ADMIN"])),
     db: Session = Depends(get_db)
 ):
     """Invite a new user to the organization."""
-    # Check if user already exists
-    existing_user = db.query(User).filter(User.email == user_data.email).first()
-    if existing_user:
+    # Get current organization from token
+    current_user_org_id = get_organization_from_token(request)
+    
+    if not current_user_org_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="User with this email already exists"
+            detail="Organization context required"
         )
     
+    # Check if user already exists
+    existing_user = db.query(User).filter(User.email == user_data.email).first()
+    
+    if existing_user:
+        # User exists, check if already in this organization
+        existing_assoc = db.query(UserOrganizationAssociation).filter(
+            UserOrganizationAssociation.user_id == existing_user.id,
+            UserOrganizationAssociation.organization_id == current_user_org_id
+        ).first()
+        
+        if existing_assoc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="User is already a member of this organization"
+            )
+        
+        # Add existing user to this organization
+        # Check if role exists and is valid
+        role = db.query(Role).filter(Role.id == user_data.role_id).first()
+        if not role:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid role"
+            )
+        
+        # Check available licenses
+        available_license = db.query(License).filter(
+            License.organization_id == current_user_org_id,
+            License.status == LicenseStatus.INACTIVE,
+            License.user_id.is_(None)
+        ).first()
+        
+        if not available_license:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No available licenses. Please purchase more licenses."
+            )
+        
+        # Create user-organization association
+        user_org_assoc = UserOrganizationAssociation(
+            user_id=existing_user.id,
+            organization_id=current_user_org_id,
+            role_id=user_data.role_id
+        )
+        db.add(user_org_assoc)
+        
+        # Assign license
+        available_license.user_id = existing_user.id
+        available_license.status = LicenseStatus.ACTIVE
+        available_license.activated_at = datetime.utcnow()
+        
+        db.commit()
+        
+        return existing_user
+    
+    # Create new user
     # Check if role exists and is valid
     role = db.query(Role).filter(Role.id == user_data.role_id).first()
     if not role:
@@ -86,7 +169,7 @@ async def invite_user(
     
     # Check subscription and available licenses
     subscription = db.query(Subscription).filter(
-        Subscription.organization_id == current_user.organization_id,
+        Subscription.organization_id == current_user_org_id,
         Subscription.status.in_(["active", "trial"])
     ).first()
     
@@ -97,24 +180,17 @@ async def invite_user(
         )
     
     # Check available licenses
-    available_licenses = db.query(License).filter(
-        License.organization_id == current_user.organization_id,
+    available_license = db.query(License).filter(
+        License.organization_id == current_user_org_id,
         License.status == LicenseStatus.INACTIVE,
         License.user_id.is_(None)
-    ).count()
+    ).first()
     
-    if available_licenses == 0:
+    if not available_license:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="No available licenses. Please purchase more licenses."
         )
-    
-    # Get an available license
-    available_license = db.query(License).filter(
-        License.organization_id == current_user.organization_id,
-        License.status == LicenseStatus.INACTIVE,
-        License.user_id.is_(None)
-    ).first()
     
     # Create user with provided password (validated by schema)
     hashed_password = get_password_hash(user_data.password)
@@ -123,14 +199,20 @@ async def invite_user(
         email=user_data.email,
         full_name=user_data.full_name,
         hashed_password=hashed_password,
-        organization_id=current_user.organization_id,
-        role_id=user_data.role_id,
-        is_verified=False  # User needs to verify email and set password
+        is_verified=False  # User needs to verify email
     )
     
     db.add(new_user)
     db.commit()
     db.refresh(new_user)
+    
+    # Create user-organization association
+    user_org_assoc = UserOrganizationAssociation(
+        user_id=new_user.id,
+        organization_id=current_user_org_id,
+        role_id=user_data.role_id
+    )
+    db.add(user_org_assoc)
     
     # Assign license to user
     available_license.user_id = new_user.id
@@ -146,25 +228,35 @@ async def invite_user(
 
 @router.delete("/users/{user_id}")
 async def remove_user(
+    request: Request,
     user_id: int,
-    current_user: User = Depends(require_manager_or_admin),
+    current_user: User = Depends(require_role_in_current_org(["MANAGER", "ADMIN"])),
     db: Session = Depends(get_db)
 ):
     """Remove a user from the organization."""
-    # Check if user exists and belongs to the same organization
-    user_to_remove = db.query(User).filter(
-        User.id == user_id,
-        User.organization_id == current_user.organization_id
+    # Get current organization from token
+    current_user_org_id = get_organization_from_token(request)
+    
+    if not current_user_org_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Organization context required"
+        )
+    
+    # Check if user exists and is part of this organization
+    user_assoc = db.query(UserOrganizationAssociation).filter(
+        UserOrganizationAssociation.user_id == user_id,
+        UserOrganizationAssociation.organization_id == current_user_org_id
     ).first()
     
-    if not user_to_remove:
+    if not user_assoc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="User not found in this organization"
         )
     
     # Prevent removing yourself
-    if user_to_remove.id == current_user.id:
+    if user_id == current_user.id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Cannot remove yourself"
@@ -172,7 +264,7 @@ async def remove_user(
     
     # Find and deactivate user's license
     user_license = db.query(License).filter(
-        License.organization_id == current_user.organization_id,
+        License.organization_id == current_user_org_id,
         License.user_id == user_id,
         License.status == LicenseStatus.ACTIVE
     ).first()
@@ -182,36 +274,53 @@ async def remove_user(
         user_license.user_id = None
         user_license.deactivated_at = datetime.utcnow()
     
-    # Deactivate user
-    user_to_remove.is_active = False
+    # Remove user-organization association
+    db.delete(user_assoc)
     
     db.commit()
     
-    return {"message": "User removed successfully"}
+    return {"message": "User removed from organization successfully"}
 
 
 @router.put("/users/{user_id}/activate")
 async def activate_user(
+    request: Request,
     user_id: int,
-    current_user: User = Depends(require_manager_or_admin),
+    current_user: User = Depends(require_role_in_current_org(["MANAGER", "ADMIN"])),
     db: Session = Depends(get_db)
 ):
     """Activate a user in the organization."""
-    # Check if user exists and belongs to the same organization
-    user_to_activate = db.query(User).filter(
-        User.id == user_id,
-        User.organization_id == current_user.organization_id
+    # Get current organization from token
+    current_user_org_id = get_organization_from_token(request)
+    
+    if not current_user_org_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Organization context required"
+        )
+    
+    # Check if user exists and is part of this organization
+    user_assoc = db.query(UserOrganizationAssociation).filter(
+        UserOrganizationAssociation.user_id == user_id,
+        UserOrganizationAssociation.organization_id == current_user_org_id
     ).first()
     
-    if not user_to_activate:
+    if not user_assoc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="User not found in this organization"
         )
     
+    user_to_activate = db.query(User).filter(User.id == user_id).first()
+    if not user_to_activate:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+    
     # Check if there's an available license
     available_license = db.query(License).filter(
-        License.organization_id == current_user.organization_id,
+        License.organization_id == current_user_org_id,
         License.status == LicenseStatus.INACTIVE,
         License.user_id.is_(None)
     ).first()
@@ -237,13 +346,23 @@ async def activate_user(
 
 @router.put("/me", response_model=OrganizationResponse)
 async def update_organization_info(
+    request: Request,
     org_data: OrganizationUpdateRequest,
-    current_user: User = Depends(require_manager_or_admin),
+    current_user: User = Depends(require_role_in_current_org(["MANAGER", "ADMIN"])),
     db: Session = Depends(get_db)
 ):
     """Update organization information."""
+    # Get current organization from token
+    current_user_org_id = get_organization_from_token(request)
+    
+    if not current_user_org_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Organization context required"
+        )
+    
     organization = db.query(Organization).filter(
-        Organization.id == current_user.organization_id
+        Organization.id == current_user_org_id
     ).first()
     
     if not organization:
@@ -279,51 +398,71 @@ async def update_organization_info(
 # Alias endpoints matching frontend expectations
 @router.get("/me/users", response_model=List[UserInviteResponse])
 async def get_organization_users_me(
-    current_user: User = Depends(require_manager_or_admin),
+    request: Request,
+    current_user: User = Depends(require_role_in_current_org(["MANAGER", "ADMIN"])),
     db: Session = Depends(get_db)
 ):
     """Get all users from the current organization (alias for /users)."""
-    return await get_organization_users(current_user, db)
+    return await get_organization_users(request, current_user, db)
 
 
 @router.post("/me/users/invite", response_model=UserInviteResponse)
 async def invite_user_me(
+    request: Request,
     user_data: UserInviteRequest,
-    current_user: User = Depends(require_manager_or_admin),
+    current_user: User = Depends(require_role_in_current_org(["MANAGER", "ADMIN"])),
     db: Session = Depends(get_db)
 ):
     """Invite a new user to the organization (alias for /users/invite)."""
-    return await invite_user(user_data, current_user, db)
+    return await invite_user(request, user_data, current_user, db)
 
 
 @router.delete("/me/users/{user_id}")
 async def remove_user_me(
+    request: Request,
     user_id: int,
-    current_user: User = Depends(require_manager_or_admin),
+    current_user: User = Depends(require_role_in_current_org(["MANAGER", "ADMIN"])),
     db: Session = Depends(get_db)
 ):
     """Remove a user from the organization (alias for /users/{user_id})."""
-    return await remove_user(user_id, current_user, db)
+    return await remove_user(request, user_id, current_user, db)
 
 
 @router.put("/me/users/{user_id}/role", response_model=UserInviteResponse)
 async def change_user_role(
+    request: Request,
     user_id: int,
     role_data: UserRoleChangeRequest,
-    current_user: User = Depends(require_manager_or_admin),
+    current_user: User = Depends(require_role_in_current_org(["MANAGER", "ADMIN"])),
     db: Session = Depends(get_db)
 ):
     """Change a user's role within the organization."""
-    # Check if user exists and belongs to the same organization
-    user_to_update = db.query(User).filter(
-        User.id == user_id,
-        User.organization_id == current_user.organization_id
+    # Get current organization from token
+    current_user_org_id = get_organization_from_token(request)
+    
+    if not current_user_org_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Organization context required"
+        )
+    
+    # Check if user exists in this organization
+    user_assoc = db.query(UserOrganizationAssociation).filter(
+        UserOrganizationAssociation.user_id == user_id,
+        UserOrganizationAssociation.organization_id == current_user_org_id
     ).first()
     
-    if not user_to_update:
+    if not user_assoc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="User not found in this organization"
+        )
+    
+    user_to_update = db.query(User).filter(User.id == user_id).first()
+    if not user_to_update:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
         )
     
     # Prevent changing own role
@@ -348,8 +487,8 @@ async def change_user_role(
             detail="Cannot assign system-level roles"
         )
     
-    # Update role
-    user_to_update.role_id = role_data.role_id
+    # Update role in the association table
+    user_assoc.role_id = role_data.role_id
     db.commit()
     db.refresh(user_to_update)
     
