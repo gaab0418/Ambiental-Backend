@@ -1,19 +1,40 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from contextlib import asynccontextmanager
 from app.config import settings
-from app.api.v1 import auth, organization, billing, master, logs, metrics, templates, upload, consultant, chat
+from app.api.v1 import auth, organization, billing, master, logs, metrics, templates, upload, consultant, chat, chat_files, chat_timeline
 from app.middleware.audit import AuditMiddleware
 from app.database import engine
 from app.models import Base
 import os
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Lifespan event handler for startup and shutdown"""
+    # Startup
+    from app.utils.db_validator import validate_database_or_exit
+    
+    # Validate database connection and tables, exit if not ready
+    validate_database_or_exit()
+    
+    print("[OK] Ambiental SaaS API iniciada!")
+    print("[OK] Sistema configurado e funcionando")
+    
+    yield
+    
+    # Shutdown (if needed)
+    pass
+
 
 app = FastAPI(
     title="Ambiental SaaS API",
     description="Backend completo para plataforma SaaS Ambiental",
     version="1.0.0",
     docs_url="/docs",
-    redoc_url="/redoc"
+    redoc_url="/redoc",
+    lifespan=lifespan
 )
 
 # CORS middleware
@@ -51,18 +72,8 @@ app.include_router(templates.router, prefix="/api/templates", tags=["Templates"]
 app.include_router(upload.router, prefix="/api/upload", tags=["Upload"])
 app.include_router(consultant.router, prefix="/api/consultant", tags=["Consultant"])
 app.include_router(chat.router, prefix="/api/chat", tags=["Chat"])
-
-
-@app.on_event("startup")
-async def startup_event():
-    """Validate database before starting API"""
-    from app.utils.db_validator import validate_database_or_exit
-    
-    # Validate database connection and tables, exit if not ready
-    validate_database_or_exit()
-    
-    print("[OK] Ambiental SaaS API iniciada!")
-    print("[OK] Sistema configurado e funcionando")
+app.include_router(chat_files.router, prefix="/api/chat", tags=["Chat Files"])
+app.include_router(chat_timeline.router, prefix="/api/chat", tags=["Chat Timeline"])
 
 
 @app.get("/")

@@ -278,7 +278,7 @@ async def register_new_organization(
     db.refresh(organization)
     
     # Create subscription
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     trial_end = now + timedelta(days=30)  # 30 days trial
     subscription = Subscription(
         organization_id=organization.id,
@@ -520,7 +520,7 @@ async def update_current_user(
     if user_data.password:
         current_user.hashed_password = get_password_hash(user_data.password)
     
-    current_user.updated_at = datetime.utcnow()
+    current_user.updated_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(current_user)
     

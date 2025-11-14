@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.orm import Session
 from typing import List
-from datetime import datetime
+from datetime import datetime, timezone
 from app.database import get_db
 from app.models.user import User
 from app.models.organization import Organization
@@ -64,15 +64,31 @@ async def get_organization_users(
             detail="Organization context required"
         )
     
-    # Get all users associated with this organization
-    user_ids = db.query(UserOrganizationAssociation.user_id).filter(
-        UserOrganizationAssociation.organization_id == current_user_org_id
-    ).all()
+    # Get all users associated with this organization including role context
+    user_rows = (
+        db.query(User, UserOrganizationAssociation.role_id)
+        .join(
+            UserOrganizationAssociation,
+            UserOrganizationAssociation.user_id == User.id
+        )
+        .filter(UserOrganizationAssociation.organization_id == current_user_org_id)
+        .all()
+    )
     
-    user_ids_list = [uid[0] for uid in user_ids]
-    users = db.query(User).filter(User.id.in_(user_ids_list)).all()
-    
-    return users
+    return [
+        UserInviteResponse(
+            id=user.id,
+            email=user.email,
+            full_name=user.full_name,
+            is_active=user.is_active,
+            is_verified=user.is_verified,
+            role_id=role_id,
+            organization_id=current_user_org_id,
+            created_at=user.created_at,
+            last_login_at=user.last_login_at
+        )
+        for user, role_id in user_rows
+    ]
 
 
 @router.get("/roles", response_model=List[RoleResponse])
@@ -152,7 +168,7 @@ async def invite_user(
         # Assign license
         available_license.user_id = existing_user.id
         available_license.status = LicenseStatus.ACTIVE
-        available_license.activated_at = datetime.utcnow()
+        available_license.activated_at = datetime.now(timezone.utc)
         
         db.commit()
         
@@ -272,7 +288,7 @@ async def remove_user(
     if user_license:
         user_license.status = LicenseStatus.INACTIVE
         user_license.user_id = None
-        user_license.deactivated_at = datetime.utcnow()
+        user_license.deactivated_at = datetime.now(timezone.utc)
     
     # Remove user-organization association
     db.delete(user_assoc)
@@ -388,7 +404,7 @@ async def update_organization_info(
     if org_data.address is not None:
         organization.address = org_data.address
     
-    organization.updated_at = datetime.utcnow()
+    organization.updated_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(organization)
     

@@ -5,7 +5,7 @@ Collects and aggregates system metrics for dashboard and reports
 
 from sqlalchemy.orm import Session
 from sqlalchemy import func
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, List
 import json
 from app.models.user import User
@@ -30,7 +30,7 @@ class MetricsCollector:
         active_organizations = db.query(Organization).filter(Organization.is_active == True).count()
         
         # Active users today (logged in today)
-        today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+        today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
         active_users_today = db.query(User).filter(
             User.is_active == True,
             User.last_login_at >= today_start
@@ -101,7 +101,7 @@ class MetricsCollector:
     def collect_usage_metrics(db: Session, period_days: int = 30) -> dict:
         """Collect usage metrics for the specified period"""
         
-        start_date = datetime.utcnow() - timedelta(days=period_days)
+        start_date = datetime.now(timezone.utc) - timedelta(days=period_days)
         
         # Users created in period
         new_users = db.query(User).filter(

@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import List
-from datetime import datetime
+from datetime import datetime, timezone
 from app.database import get_db
 from app.models.user import User
 from app.models.organization import Organization
@@ -176,8 +176,8 @@ async def update_organization_subscription(
             organization_id=org_id,
             plan_id=subscription_data.plan_id,
             status=SubscriptionStatus(subscription_data.status),
-            current_period_start=datetime.utcnow(),
-            current_period_end=subscription_data.current_period_end or datetime.utcnow(),
+            current_period_start=datetime.now(timezone.utc),
+            current_period_end=subscription_data.current_period_end or datetime.now(timezone.utc),
             trial_end=subscription_data.trial_end
         )
         db.add(subscription)
@@ -185,7 +185,7 @@ async def update_organization_subscription(
         # Update existing subscription
         subscription.plan_id = subscription_data.plan_id
         subscription.status = SubscriptionStatus(subscription_data.status)
-        subscription.updated_at = datetime.utcnow()
+        subscription.updated_at = datetime.now(timezone.utc)
         
         if subscription_data.current_period_end:
             subscription.current_period_end = subscription_data.current_period_end
@@ -194,7 +194,7 @@ async def update_organization_subscription(
             subscription.trial_end = subscription_data.trial_end
         
         if subscription_data.status == "canceled":
-            subscription.canceled_at = datetime.utcnow()
+            subscription.canceled_at = datetime.now(timezone.utc)
     
     db.commit()
     db.refresh(subscription)
@@ -297,7 +297,7 @@ async def activate_organization(
         )
     
     organization.is_active = True
-    organization.updated_at = datetime.utcnow()
+    organization.updated_at = datetime.now(timezone.utc)
     
     db.commit()
     
@@ -331,7 +331,7 @@ async def deactivate_organization(
         )
     
     organization.is_active = False
-    organization.updated_at = datetime.utcnow()
+    organization.updated_at = datetime.now(timezone.utc)
     
     # Deactivate all users in the organization EXCEPT super admins
     # Get all users associated with this organization
@@ -394,7 +394,7 @@ async def update_organization(
     if org_data.address is not None:
         organization.address = org_data.address
     
-    organization.updated_at = datetime.utcnow()
+    organization.updated_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(organization)
     
@@ -591,7 +591,7 @@ async def create_user(
     if available_license:
         available_license.user_id = new_user.id
         available_license.status = LicenseStatus.ACTIVE
-        available_license.activated_at = datetime.utcnow()
+        available_license.activated_at = datetime.now(timezone.utc)
         db.commit()
     
     # Get role and organization info for response
@@ -727,7 +727,7 @@ async def change_user_organization(
     if old_license:
         old_license.status = LicenseStatus.INACTIVE
         old_license.user_id = None
-        old_license.deactivated_at = datetime.utcnow()
+        old_license.deactivated_at = datetime.now(timezone.utc)
     
     # Change user organization in association
     current_assoc.organization_id = new_organization_id
@@ -742,7 +742,7 @@ async def change_user_organization(
     if new_license:
         new_license.user_id = user_id
         new_license.status = LicenseStatus.ACTIVE
-        new_license.activated_at = datetime.utcnow()
+        new_license.activated_at = datetime.now(timezone.utc)
     
     db.commit()
     
@@ -858,7 +858,7 @@ async def update_user(
         # Update the association
         current_assoc.role_id = user_data.role_id
     
-    user.updated_at = datetime.utcnow()
+    user.updated_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(user)
     
@@ -925,7 +925,7 @@ async def delete_user_permanently(
     for license in licenses:
         license.status = LicenseStatus.INACTIVE
         license.user_id = None
-        license.deactivated_at = datetime.utcnow()
+        license.deactivated_at = datetime.now(timezone.utc)
     
     # Delete user permanently
     user_email = user.email
@@ -1073,7 +1073,7 @@ async def update_plan(
     if plan_data.is_active is not None:
         plan.is_active = plan_data.is_active
     
-    plan.updated_at = datetime.utcnow()
+    plan.updated_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(plan)
     

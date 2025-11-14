@@ -1,17 +1,16 @@
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, ConfigDict
 from typing import Optional
 from datetime import datetime
 
 
 class OrganizationSelection(BaseModel):
     """Organization details for selection after login."""
+    model_config = ConfigDict(from_attributes=True)
+    
     id: int
     name: str
     cnpj_cpf: str
     role_name: str
-    
-    class Config:
-        from_attributes = True
 
 
 class Token(BaseModel):
@@ -51,6 +50,8 @@ class OrganizationSelectionRequest(BaseModel):
 
 
 class UserResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    
     id: int
     email: str
     full_name: str
@@ -72,9 +73,6 @@ class UserResponse(BaseModel):
     
     # Flag indicating if user is a system administrator
     is_system_admin: bool = False
-
-    class Config:
-        from_attributes = True
 
 
 class UserSelfUpdateRequest(BaseModel):

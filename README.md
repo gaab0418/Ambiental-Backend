@@ -10,6 +10,10 @@ Backend completo e escalável para uma plataforma SaaS (Software as a Service) u
 - **PostgreSQL**: Banco de dados robusto com SQLAlchemy ORM
 - **Alembic**: Migrações automáticas de banco de dados
 - **Pydantic**: Validação robusta de dados com type hints
+- **🤖 Integração N8N**: Sistema de chat com IA, processamento de arquivos e timeline
+- **🔐 Criptografia AES-256-GCM**: Armazenamento seguro de arquivos sensíveis
+- **📊 Timeline de Processos**: Rastreamento visual do andamento de processos
+- **🔒 HMAC Signature**: Validação segura de callbacks bidirecionais
 
 ## 📋 Pré-requisitos
 
@@ -134,6 +138,23 @@ DEBUG=True
 
 # CORS
 ALLOWED_ORIGINS=http://localhost:3000,http://localhost:8080
+
+# N8N Integration
+N8N_WEBHOOK_URL=https://your-n8n-instance.com/webhook/your-webhook-id
+N8N_JWT_TOKEN=your-n8n-jwt-token
+N8N_SIGNING_SECRET=shared-secret-for-hmac-validation
+
+# Deployment & Storage
+DEPLOYMENT_MODE=saas  # ou "onprem"
+FILE_STORAGE_BACKEND=local_encrypted  # ou "s3_encrypted"
+
+# Encryption (gere com: python -c "from app.core.encryption import EncryptionUtils; print(EncryptionUtils.generate_key())")
+FILE_ENCRYPTION_KEY=base64-encoded-256bit-key-here
+```
+
+**⚠️ Importante**: Para gerar a chave de criptografia de arquivos, execute:
+```bash
+python -c "from app.core.encryption import EncryptionUtils; print(EncryptionUtils.generate_key())"
 ```
 
 ## 📚 Documentação da API
@@ -172,6 +193,10 @@ app/
 - **Plan**: Planos de assinatura
 - **Subscription**: Assinaturas ativas
 - **License**: Licenças de usuário
+- **ChatThread**: Conversas/threads de chat
+- **ChatMessage**: Mensagens do chat (usuário e IA)
+- **ChatFile**: Arquivos anexados aos chats (criptografados)
+- **ChatTimelineEvent**: Eventos da timeline de processos
 
 ## 🔐 Autenticação
 
@@ -235,6 +260,25 @@ Cada organização possui isolamento completo de dados através de:
 - `PUT /organizations/{id}/subscription` - Atualizar assinatura
 - `GET /organizations/{id}/users` - Usuários da organização
 
+### Chat com IA (`/api/chat`)
+- `GET /threads` - Listar conversas do usuário
+- `POST /threads` - Criar nova conversa
+- `GET /threads/{id}/messages` - Listar mensagens
+- `POST /threads/{id}/messages` - Enviar mensagem (trigger N8N)
+- `DELETE /threads/{id}` - Deletar conversa
+
+### Arquivos de Chat (`/api/chat`)
+- `POST /threads/{id}/files` - Upload de arquivos (criptografados)
+- `GET /threads/{id}/files` - Listar arquivos do chat
+- `GET /threads/{id}/files/{file_id}/content` - Download seguro
+- `DELETE /threads/{id}/files/{file_id}` - Remover arquivo
+
+### Timeline (`/api/chat`)
+- `GET /threads/{id}/timeline` - Listar eventos da timeline
+- `GET /threads/{id}/timeline/summary` - Resumo da timeline
+- `POST /threads/{id}/timeline` - Criar evento (N8N only)
+- `PATCH /threads/{id}/timeline/{event_id}` - Atualizar evento (N8N only)
+
 ## 🚀 Deploy
 
 ### Desenvolvimento
@@ -289,14 +333,43 @@ alembic downgrade -1
 - CORS configurado
 - Validação de dados com Pydantic
 - Isolamento de dados por organização
+- **Criptografia AES-256-GCM** para arquivos sensíveis
+- **HMAC-SHA256** para validação de callbacks N8N
+- **Checksum SHA-256** para integridade de arquivos
+- Proteção contra replay attacks (validação de timestamp)
+
+## 🤖 Integração N8N e Chat com IA
+
+Este sistema inclui uma integração completa com N8N para processamento de IA:
+
+- **Chat inteligente** com histórico e contexto
+- **Upload e processamento de arquivos** (qualquer formato)
+- **Vetorização automática** com pgvector
+- **Timeline visual** do andamento de processos
+- **Comunicação segura** bidirecional (Backend ↔ N8N)
+- **Suporte SaaS e On-Premise**
+
+📖 **Documentação completa**: [N8N_INTEGRATION_GUIDE.md](N8N_INTEGRATION_GUIDE.md)
+
+### Exemplo de Fluxo
+
+1. Usuário envia mensagem e anexa documentos
+2. Backend criptografa e armazena arquivos
+3. Backend chama N8N via webhook (com JWT)
+4. N8N processa com IA, vetoriza documentos
+5. N8N retorna resposta via callback (com HMAC)
+6. Backend atualiza timeline e entrega resposta ao usuário
 
 ## 📈 Próximos Passos
 
+- [x] Sistema de chat com IA e timeline
+- [x] Integração N8N com segurança HMAC
+- [x] Criptografia de arquivos AES-256-GCM
 - [ ] Integração com gateway de pagamento
 - [ ] Sistema de notificações por email
 - [ ] Logs estruturados
 - [ ] Métricas e monitoramento
-- [ ] Testes automatizados
+- [ ] WebSockets para atualizações em tempo real
 - [ ] CI/CD pipeline
 
 ## 🤝 Contribuição

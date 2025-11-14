@@ -19,5 +19,7 @@ class ChatThread(Base):
     user = relationship("User", backref="chat_threads")
     organization = relationship("Organization", backref="chat_threads")
     messages = relationship("ChatMessage", back_populates="thread", cascade="all, delete-orphan")
+    files = relationship("ChatFile", back_populates="thread", cascade="all, delete-orphan")
+    timeline_events = relationship("ChatTimelineEvent", back_populates="thread", cascade="all, delete-orphan")
 
 

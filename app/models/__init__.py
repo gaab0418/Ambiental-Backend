@@ -9,6 +9,8 @@ from app.models.system_metric import SystemMetric
 from app.models.document_template import DocumentTemplate
 from app.models.chat_thread import ChatThread
 from app.models.chat_message import ChatMessage
+from app.models.chat_file import ChatFile
+from app.models.chat_timeline_event import ChatTimelineEvent
 from app.models.user_organization_association import UserOrganizationAssociation
 from app.database import Base
 
@@ -25,5 +27,7 @@ __all__ = [
     "DocumentTemplate",
     "ChatThread",
     "ChatMessage",
+    "ChatFile",
+    "ChatTimelineEvent",
     "UserOrganizationAssociation"
 ]
