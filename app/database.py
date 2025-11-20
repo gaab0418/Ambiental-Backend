@@ -7,6 +7,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 # Configure engine with connection pool settings to handle connection issues
+# Garantir que o schema 'public' seja usado por padrão
 engine = create_engine(
     settings.database_url,
     pool_pre_ping=True,  # Validate connections before using them (fixes stale connections)
@@ -15,15 +16,23 @@ engine = create_engine(
     max_overflow=10,     # Maximum overflow connections
     echo=False,          # Set to True for SQL query logging
     connect_args={
-        "connect_timeout": 10
+        "connect_timeout": 10,
+        "options": "-c search_path=public"  # Forçar uso do schema public
     }
 )
 
 # Add connection pool event listeners to handle disconnections
 @event.listens_for(engine, "connect")
 def set_connection_settings(dbapi_conn, connection_record):
-    """Set connection-level settings if needed"""
-    pass
+    """Set connection-level settings - garantir schema public"""
+    if hasattr(dbapi_conn, 'cursor'):
+        cursor = dbapi_conn.cursor()
+        try:
+            # Garantir que estamos usando o schema public
+            cursor.execute("SET search_path TO public")
+            cursor.close()
+        except Exception:
+            pass  # Ignorar erros em conexões que não suportam isso
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 

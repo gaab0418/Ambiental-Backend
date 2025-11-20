@@ -14,10 +14,8 @@ import os
 async def lifespan(app: FastAPI):
     """Lifespan event handler for startup and shutdown"""
     # Startup
-    from app.utils.db_validator import validate_database_or_exit
-    
-    # Validate database connection and tables, exit if not ready
-    validate_database_or_exit()
+    # Validação já foi feita no main.py raiz, não precisa validar novamente aqui
+    # para evitar conflitos com o seed que foi executado
     
     print("[OK] Ambiental SaaS API iniciada!")
     print("[OK] Sistema configurado e funcionando")

@@ -165,15 +165,6 @@ uploads/profiles/*
 uploads/logos/*
 uploads/documents/*
 
-# Test files and temporary scripts
-test_*.py
-*_test.py
-check_*.py
-create_*.py
-*_status.md
-*_resultado.md
-*_updates*.md
-
 # PowerShell scripts
 *.ps1
 

@@ -23,6 +23,11 @@ class Settings(BaseSettings):
     # Environment
     environment: str = "development"
     debug: bool = True
+
+    # Initial admin bootstrap
+    initial_admin_email: str = "admin@ambiental.local"
+    initial_admin_full_name: str = "Administrador Ambiental"
+    initial_admin_password: str = "ChangeMe#123"
     
     # CORS - stored as string, converted to list
     allowed_origins_str: str = "http://localhost:3000,http://localhost:8080,http://localhost:4200"
