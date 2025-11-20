@@ -66,34 +66,16 @@ def create_system_plans(db: Session):
             "description": "Free trial plan - 30 days",
             "price": 0.00,
             "currency": "BRL",
-            "max_users": 5,
+            "max_users": 1,
             "is_system": True
         },
         {
             "name": "BASIC",
             "display_name": "Basic",
             "description": "Basic plan for small teams",
-            "price": 29.90,
+            "price": 0.00,
             "currency": "BRL",
-            "max_users": 10,
-            "is_system": True
-        },
-        {
-            "name": "PROFESSIONAL",
-            "display_name": "Professional",
-            "description": "Professional plan for growing teams",
-            "price": 79.90,
-            "currency": "BRL",
-            "max_users": 50,
-            "is_system": True
-        },
-        {
-            "name": "ENTERPRISE",
-            "display_name": "Enterprise",
-            "description": "Enterprise plan for large organizations",
-            "price": 199.90,
-            "currency": "BRL",
-            "max_users": 200,
+            "max_users": 5,
             "is_system": True
         }
     ]

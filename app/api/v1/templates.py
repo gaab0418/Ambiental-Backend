@@ -389,23 +389,3 @@ async def delete_template(
     return {"message": "Template deleted successfully"}
 
 
-@router.get("/placeholders", response_model=List[PlaceholderCategory])
-async def get_template_placeholders(
-    current_user: User = Depends(get_current_active_user)
-):
-    """Get all available placeholders for document templates.
-    
-    Returns a list of placeholder categories with their available placeholders.
-    Each placeholder includes:
-    - name: The placeholder name to use in templates (e.g., "user.full_name")
-    - description: What the placeholder represents
-    - example: An example value
-    - category: The category it belongs to
-    
-    Usage in templates: {{ placeholder_name }}
-    Example: {{ user.full_name }} will be replaced with the user's full name.
-    """
-    return get_all_placeholders()
-
-
-
