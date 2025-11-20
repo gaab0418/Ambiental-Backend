@@ -160,10 +160,8 @@ config.db
 .vscode/
 .idea/
 
-# Upload directories (keep structure but ignore content)
-uploads/profiles/*
-uploads/logos/*
-uploads/documents/*
+# Upload directories
+uploads/
 
 # PowerShell scripts
 *.ps1
