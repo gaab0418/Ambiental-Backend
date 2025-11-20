@@ -1,0 +1,266 @@
+{
+  "name": "Timeline & Checklist Updater",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "timeline-updater",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [250, 300],
+      "webhookId": "timeline-updater-webhook"
+    },
+    {
+      "parameters": {
+        "functionCode": "// Validate timeline update request\nconst body = $input.item.json.body;\n\nif (!body.thread_id || !body.org_id) {\n  throw new Error('Missing required fields: thread_id, org_id');\n}\n\nreturn {\n  json: {\n    thread_id: body.thread_id,\n    org_id: body.org_id,\n    event_type: body.event_type || 'manual_update',\n    file_id: body.file_id || null,\n    message_id: body.message_id || null,\n    forced: body.forced || false\n  }\n};"
+      },
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [450, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT ct.id, ct.title, ct.description, ct.municipality, ct.state, o.name as org_name FROM chat_threads ct JOIN organizations o ON ct.organization_id = o.id WHERE ct.id = {{ $json.thread_id }} AND ct.organization_id = {{ $json.org_id }} LIMIT 1"
+      },
+      "id": "load-thread",
+      "name": "Load Thread Info",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [650, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id, filename, mime_type, category, status FROM chat_files WHERE thread_id = {{ $json.thread_id }} AND status = 'processed' ORDER BY uploaded_at ASC"
+      },
+      "id": "load-files",
+      "name": "Load All Files",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [850, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id, instruction_number, version, content_text FROM municipal_instructions WHERE municipality = {{ $('Load Thread Info').item.json.municipality }} AND state = {{ $('Load Thread Info').item.json.state }} AND is_current = true LIMIT 1"
+      },
+      "id": "load-current-in",
+      "name": "Load Current IN",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [850, 400]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Build context for checklist evaluation\nconst threadData = $('Load Thread Info').item.json;\nconst files = $('Load All Files').all().map(item => item.json);\nconst inData = $('Load Current IN').item.json;\n\n// Group files by category\nconst filesByCategory = {};\nfor (const file of files) {\n  const category = file.category || 'Outros';\n  if (!filesByCategory[category]) {\n    filesByCategory[category] = [];\n  }\n  filesByCategory[category].push(file);\n}\n\n// Define expected categories based on typical environmental process\nconst expectedCategories = [\n  'Documentos do Empreendedor',\n  'Projetos Arquitetônicos',\n  'Comprovantes/Boletos',\n  'Licenças Anteriores'\n];\n\nconst context = {\n  thread_id: $('Validate Input').item.json.thread_id,\n  org_id: $('Validate Input').item.json.org_id,\n  thread_title: threadData.title,\n  municipality: threadData.municipality,\n  state: threadData.state,\n  files_by_category: filesByCategory,\n  total_files: files.length,\n  expected_categories: expectedCategories,\n  in_number: inData?.instruction_number || 'N/A',\n  in_version: inData?.version || 'N/A'\n};\n\nreturn { json: context };"
+      },
+      "id": "build-context",
+      "name": "Build Context",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [1050, 300]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Evaluate checklist and determine stage\nconst ctx = $input.item.json;\n\nconst checklist = [];\nconst stages = [\n  { name: 'Coleta de documentos', status: 'in_progress', progress: 0 },\n  { name: 'Conferência interna', status: 'pending', progress: 0 },\n  { name: 'Pronto para protocolo', status: 'pending', progress: 0 },\n  { name: 'Aguardando parecer', status: 'pending', progress: 0 }\n];\n\n// Check each expected category\nfor (const category of ctx.expected_categories) {\n  const hasFiles = ctx.files_by_category[category] && ctx.files_by_category[category].length > 0;\n  checklist.push({\n    item: category,\n    status: hasFiles ? 'completed' : 'pending',\n    files_count: ctx.files_by_category[category]?.length || 0\n  });\n}\n\n// Calculate overall progress\nconst completedItems = checklist.filter(item => item.status === 'completed').length;\nconst totalItems = checklist.length;\nconst progressPercent = Math.round((completedItems / totalItems) * 100);\n\n// Update stage status based on progress\nif (progressPercent >= 100) {\n  stages[0].status = 'completed';\n  stages[0].progress = 100;\n  stages[1].status = 'in_progress';\n  stages[1].progress = 50;\n} else if (progressPercent >= 50) {\n  stages[0].status = 'in_progress';\n  stages[0].progress = progressPercent;\n} else {\n  stages[0].status = 'in_progress';\n  stages[0].progress = progressPercent;\n}\n\nreturn {\n  json: {\n    ...ctx,\n    checklist: checklist,\n    stages: stages,\n    overall_progress: progressPercent,\n    ready_for_submission: progressPercent >= 100\n  }\n};"
+      },
+      "id": "evaluate-checklist",
+      "name": "Evaluate Checklist",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [1250, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id, event_type, status FROM chat_timeline_events WHERE thread_id = {{ $json.thread_id }} ORDER BY event_date DESC LIMIT 1"
+      },
+      "id": "get-last-event",
+      "name": "Get Last Event",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [1450, 300]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Determine what changed since last event\nconst currentData = $('Evaluate Checklist').item.json;\nconst lastEvent = $input.item.json;\n\nlet hasChanges = true;\nlet changeDescription = 'Timeline atualizada';\n\nif (!lastEvent || lastEvent.length === 0) {\n  changeDescription = 'Timeline inicial criada';\n} else {\n  const last = Array.isArray(lastEvent) ? lastEvent[0] : lastEvent;\n  // In production: compare last event status with current to detect real changes\n  changeDescription = `Progresso atualizado para ${currentData.overall_progress}%`;\n}\n\nreturn {\n  json: {\n    ...currentData,\n    has_changes: hasChanges,\n    change_description: changeDescription\n  }\n};"
+      },
+      "id": "detect-changes",
+      "name": "Detect Changes",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [1650, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.has_changes }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "has-changes",
+      "name": "Has Changes?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1850, 300]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Prepare timeline events for insertion\nconst data = $input.item.json;\nconst events = [];\n\n// Create event for each stage\nfor (const stage of data.stages) {\n  events.push({\n    thread_id: data.thread_id,\n    event_type: 'stage_update',\n    title: stage.name,\n    description: `Status: ${stage.status}, Progresso: ${stage.progress}%`,\n    status: stage.status,\n    event_metadata: JSON.stringify({\n      progress: stage.progress,\n      checklist_items: data.checklist.length,\n      overall_progress: data.overall_progress\n    })\n  });\n}\n\nreturn events.map(event => ({ json: event }));"
+      },
+      "id": "prepare-events",
+      "name": "Prepare Timeline Events",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [2050, 300]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "table": "chat_timeline_events",
+        "columns": "thread_id, event_type, title, description, status, event_metadata, event_date",
+        "values": "={{ $json.thread_id }}, ={{ JSON.stringify($json.event_type) }}, ={{ JSON.stringify($json.title) }}, ={{ JSON.stringify($json.description) }}, ={{ JSON.stringify($json.status) }}, ={{ JSON.stringify($json.event_metadata) }}, NOW()"
+      },
+      "id": "insert-events",
+      "name": "Insert Timeline Events",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [2250, 300]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Build response with updated timeline\nconst data = $('Detect Changes').item.json;\n\nreturn {\n  json: {\n    status: 'success',\n    thread_id: data.thread_id,\n    overall_progress: data.overall_progress,\n    checklist: data.checklist,\n    stages: data.stages,\n    ready_for_submission: data.ready_for_submission,\n    change_description: data.change_description,\n    message: 'Timeline atualizada com sucesso'\n  }\n};"
+      },
+      "id": "build-response",
+      "name": "Build Response",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [2450, 300]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "table": "flow_metrics",
+        "columns": "org_id, flow_name, execution_time_ms, status, metadata_json, created_at",
+        "values": "={{ $('Validate Input').item.json.org_id }}, 'timeline_updater', ={{ $workflow.duration }}, 'success', ={{ JSON.stringify({thread_id: $json.thread_id, progress: $json.overall_progress}) }}, NOW()"
+      },
+      "id": "save-metrics",
+      "name": "Save Metrics",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [2450, 400]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}"
+      },
+      "id": "respond-success",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [2650, 300]
+    },
+    {
+      "parameters": {
+        "functionCode": "// No changes detected\nconst data = $input.item.json;\n\nreturn {\n  json: {\n    status: 'no_changes',\n    thread_id: data.thread_id,\n    message: 'Nenhuma mudança detectada na timeline'\n  }\n};"
+      },
+      "id": "no-changes",
+      "name": "No Changes",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [1850, 450]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}"
+      },
+      "id": "respond-no-changes",
+      "name": "Respond No Changes",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [2050, 450]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [[{ "node": "Validate Input", "type": "main", "index": 0 }]]
+    },
+    "Validate Input": {
+      "main": [[{ "node": "Load Thread Info", "type": "main", "index": 0 }]]
+    },
+    "Load Thread Info": {
+      "main": [
+        [
+          { "node": "Load All Files", "type": "main", "index": 0 },
+          { "node": "Load Current IN", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Load All Files": {
+      "main": [[{ "node": "Build Context", "type": "main", "index": 0 }]]
+    },
+    "Load Current IN": {
+      "main": [[{ "node": "Build Context", "type": "main", "index": 0 }]]
+    },
+    "Build Context": {
+      "main": [[{ "node": "Evaluate Checklist", "type": "main", "index": 0 }]]
+    },
+    "Evaluate Checklist": {
+      "main": [[{ "node": "Get Last Event", "type": "main", "index": 0 }]]
+    },
+    "Get Last Event": {
+      "main": [[{ "node": "Detect Changes", "type": "main", "index": 0 }]]
+    },
+    "Detect Changes": {
+      "main": [[{ "node": "Has Changes?", "type": "main", "index": 0 }]]
+    },
+    "Has Changes?": {
+      "main": [
+        [{ "node": "Prepare Timeline Events", "type": "main", "index": 0 }],
+        [{ "node": "No Changes", "type": "main", "index": 0 }]
+      ]
+    },
+    "Prepare Timeline Events": {
+      "main": [[{ "node": "Insert Timeline Events", "type": "main", "index": 0 }]]
+    },
+    "Insert Timeline Events": {
+      "main": [
+        [
+          { "node": "Build Response", "type": "main", "index": 0 },
+          { "node": "Save Metrics", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Build Response": {
+      "main": [[{ "node": "Respond Success", "type": "main", "index": 0 }]]
+    },
+    "No Changes": {
+      "main": [[{ "node": "Respond No Changes", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 1,
+  "updatedAt": "2025-11-15T00:00:00.000Z",
+  "versionId": "1"
+}
+
+
+

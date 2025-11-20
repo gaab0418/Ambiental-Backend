@@ -12,6 +12,9 @@ from app.models.chat_message import ChatMessage
 from app.models.chat_file import ChatFile
 from app.models.chat_timeline_event import ChatTimelineEvent
 from app.models.user_organization_association import UserOrganizationAssociation
+from app.models.org_connection import OrgConnection
+from app.models.municipal_instruction import MunicipalInstruction
+from app.models.flow_metric import FlowMetric
 from app.database import Base
 
 __all__ = [
@@ -29,5 +32,8 @@ __all__ = [
     "ChatMessage",
     "ChatFile",
     "ChatTimelineEvent",
-    "UserOrganizationAssociation"
+    "UserOrganizationAssociation",
+    "OrgConnection",
+    "MunicipalInstruction",
+    "FlowMetric"
 ]

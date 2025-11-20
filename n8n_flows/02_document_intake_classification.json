@@ -1,0 +1,336 @@
+{
+  "name": "Document Intake & Classification",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "document-intake",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [250, 300],
+      "webhookId": "document-intake-webhook"
+    },
+    {
+      "parameters": {
+        "functionCode": "// Validate incoming document upload event\nconst body = $input.item.json.body;\nconst headers = $input.item.json.headers;\n\nif (!headers.authorization) {\n  throw new Error('Missing Authorization header');\n}\n\nif (!body.file_id || !body.org_id || !body.thread_id) {\n  throw new Error('Missing required fields: file_id, org_id, thread_id');\n}\n\nreturn {\n  json: {\n    file_id: body.file_id,\n    org_id: body.org_id,\n    thread_id: body.thread_id,\n    filename: body.filename,\n    file_path: body.file_path,\n    mime_type: body.mime_type,\n    file_size: body.file_size\n  }\n};"
+      },
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [450, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT file_hash FROM chat_files WHERE id = {{ $json.file_id }} LIMIT 1"
+      },
+      "id": "check-existing-hash",
+      "name": "Check Existing Hash",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [650, 300]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Calculate file hash (simulated - in production use actual file reading)\nconst fileData = $('Validate Input').item.json;\nconst existingData = $input.item.json;\n\n// Simulate hash calculation\n// In production: read file from file_path and calculate SHA256\nconst crypto = require('crypto');\nconst hash = crypto.createHash('sha256')\n  .update(fileData.filename + fileData.file_size + Date.now())\n  .digest('hex');\n\nreturn {\n  json: {\n    ...fileData,\n    calculated_hash: hash,\n    existing_hash: existingData.file_hash || null,\n    is_new: !existingData.file_hash || existingData.file_hash !== hash\n  }\n};"
+      },
+      "id": "calculate-hash",
+      "name": "Calculate Hash",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [850, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.is_new }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "is-new-file",
+      "name": "Is New File?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1050, 300]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Skip processing - file already processed\nconst data = $input.item.json;\n\nreturn {\n  json: {\n    file_id: data.file_id,\n    status: 'skipped',\n    reason: 'File already processed (hash match)',\n    hash: data.existing_hash\n  }\n};"
+      },
+      "id": "skip-processing",
+      "name": "Skip Processing",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [1050, 450]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Detect document type and validate readability\nconst data = $input.item.json;\n\nconst mimeType = data.mime_type || '';\nlet documentType = 'unknown';\nlet category = 'Outros';\nlet needsOCR = false;\n\n// Categorize by mime type\nif (mimeType.includes('pdf')) {\n  documentType = 'pdf';\n  category = 'Documentos';\n  needsOCR = false; // Assume PDF is text-based\n} else if (mimeType.includes('image')) {\n  documentType = 'image';\n  category = 'Imagens/Plantas';\n  needsOCR = true;\n} else if (mimeType.includes('word') || mimeType.includes('document')) {\n  documentType = 'document';\n  category = 'Documentos';\n} else if (mimeType.includes('spreadsheet') || mimeType.includes('excel')) {\n  documentType = 'spreadsheet';\n  category = 'Planilhas';\n}\n\n// Refine category based on filename\nconst filename = (data.filename || '').toLowerCase();\nif (filename.includes('boleto') || filename.includes('pagamento')) {\n  category = 'Comprovantes/Boletos';\n} else if (filename.includes('licença') || filename.includes('licenca') || filename.includes('alvara')) {\n  category = 'Licenças Anteriores';\n} else if (filename.includes('projeto') || filename.includes('planta')) {\n  category = 'Projetos Arquitetônicos';\n} else if (filename.includes('empreendedor') || filename.includes('cpf') || filename.includes('cnpj')) {\n  category = 'Documentos do Empreendedor';\n}\n\nreturn {\n  json: {\n    ...data,\n    document_type: documentType,\n    category: category,\n    needs_ocr: needsOCR,\n    readable: true // Assume readable by default\n  }\n};"
+      },
+      "id": "detect-type",
+      "name": "Detect Document Type",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [1250, 300]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Extract metadata from document\nconst data = $input.item.json;\n\n// Simulate metadata extraction\n// In production: use PDF parser, image EXIF, etc.\nconst metadata = {\n  extracted_date: new Date().toISOString(),\n  page_count: 1,\n  language: 'pt-BR',\n  has_text: !data.needs_ocr,\n  confidence: 0.95\n};\n\n// Try to extract date from filename\nconst dateMatch = data.filename.match(/(\\d{2}[-/]\\d{2}[-/]\\d{4})|(\\d{4}[-/]\\d{2}[-/]\\d{2})/);\nif (dateMatch) {\n  metadata.document_date = dateMatch[0];\n}\n\nreturn {\n  json: {\n    ...data,\n    metadata: metadata\n  }\n};"
+      },
+      "id": "extract-metadata",
+      "name": "Extract Metadata",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [1450, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.needs_ocr }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "needs-ocr",
+      "name": "Needs OCR?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1650, 300]
+    },
+    {
+      "parameters": {
+        "model": "gemini-1.5-flash",
+        "prompt": "Extraia todo o texto visível desta imagem de documento. Retorne apenas o texto, sem formatação adicional.",
+        "options": {
+          "imagePath": "={{ $json.file_path }}"
+        }
+      },
+      "id": "ocr-with-vision",
+      "name": "OCR with Vision AI",
+      "type": "n8n-nodes-base.googleGemini",
+      "typeVersion": 1,
+      "position": [1650, 200],
+      "credentials": {
+        "googleGeminiApi": {
+          "id": "gemini-api",
+          "name": "Google Gemini API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "functionCode": "// Store OCR result\nconst data = $('Extract Metadata').item.json;\nconst ocrResult = $input.item.json.response || $input.item.json.text || '';\n\ndata.extracted_text = ocrResult;\ndata.metadata.ocr_performed = true;\n\nreturn { json: data };"
+      },
+      "id": "store-ocr",
+      "name": "Store OCR Result",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [1850, 200]
+    },
+    {
+      "parameters": {},
+      "id": "merge-ocr-path",
+      "name": "Merge OCR Path",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 2,
+      "position": [1850, 300]
+    },
+    {
+      "parameters": {
+        "model": "text-embedding-004",
+        "text": "={{ $json.extracted_text || $json.filename + ' - ' + $json.category }}"
+      },
+      "id": "generate-embedding",
+      "name": "Generate Embedding",
+      "type": "n8n-nodes-base.googleGemini",
+      "typeVersion": 1,
+      "position": [2050, 300],
+      "credentials": {
+        "googleGeminiApi": {
+          "id": "gemini-api",
+          "name": "Google Gemini API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "functionCode": "// Prepare vector data for storage\nconst data = $('Merge OCR Path').item.json;\nconst embedding = $input.item.json.embedding || [];\n\nreturn {\n  json: {\n    file_id: data.file_id,\n    org_id: data.org_id,\n    thread_id: data.thread_id,\n    embedding: JSON.stringify(embedding),\n    text_content: data.extracted_text || '',\n    metadata: data.metadata\n  }\n};"
+      },
+      "id": "prepare-vector",
+      "name": "Prepare Vector Data",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [2250, 300]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "table": "chat_files",
+        "updateKey": "id",
+        "columns": "file_hash, category, status, metadata_json, vectorized_at",
+        "values": "={{ $('Calculate Hash').item.json.calculated_hash }}, ={{ $('Detect Document Type').item.json.category }}, 'processed', ={{ JSON.stringify($json.metadata) }}, NOW()",
+        "where": "id = {{ $json.file_id }}"
+      },
+      "id": "update-file-record",
+      "name": "Update File Record",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [2450, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.N8N_WEBHOOK_URL }}/timeline-updater",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {},
+        "bodyParameters": {
+          "parameters": [
+            { "name": "thread_id", "value": "={{ $json.thread_id }}" },
+            { "name": "org_id", "value": "={{ $json.org_id }}" },
+            { "name": "event_type", "value": "document_added" },
+            { "name": "file_id", "value": "={{ $json.file_id }}" }
+          ]
+        }
+      },
+      "id": "trigger-timeline-update",
+      "name": "Trigger Timeline Update",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [2650, 300]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Build success response\nconst data = $('Prepare Vector Data').item.json;\nconst fileData = $('Detect Document Type').item.json;\n\nreturn {\n  json: {\n    status: 'success',\n    file_id: data.file_id,\n    category: fileData.category,\n    hash: $('Calculate Hash').item.json.calculated_hash,\n    vectorized: true,\n    message: 'Document processed and classified successfully'\n  }\n};"
+      },
+      "id": "build-response",
+      "name": "Build Response",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [2850, 300]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "table": "flow_metrics",
+        "columns": "org_id, flow_name, execution_time_ms, status, metadata_json, created_at",
+        "values": "={{ $('Validate Input').item.json.org_id }}, 'document_intake', ={{ $workflow.duration }}, 'success', ={{ JSON.stringify({file_id: $json.file_id, category: $json.category}) }}, NOW()"
+      },
+      "id": "save-metrics",
+      "name": "Save Metrics",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [2850, 400]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}"
+      },
+      "id": "respond-success",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [3050, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}"
+      },
+      "id": "respond-skip",
+      "name": "Respond Skip",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1250, 450]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [[{ "node": "Validate Input", "type": "main", "index": 0 }]]
+    },
+    "Validate Input": {
+      "main": [[{ "node": "Check Existing Hash", "type": "main", "index": 0 }]]
+    },
+    "Check Existing Hash": {
+      "main": [[{ "node": "Calculate Hash", "type": "main", "index": 0 }]]
+    },
+    "Calculate Hash": {
+      "main": [[{ "node": "Is New File?", "type": "main", "index": 0 }]]
+    },
+    "Is New File?": {
+      "main": [
+        [{ "node": "Detect Document Type", "type": "main", "index": 0 }],
+        [{ "node": "Skip Processing", "type": "main", "index": 0 }]
+      ]
+    },
+    "Skip Processing": {
+      "main": [[{ "node": "Respond Skip", "type": "main", "index": 0 }]]
+    },
+    "Detect Document Type": {
+      "main": [[{ "node": "Extract Metadata", "type": "main", "index": 0 }]]
+    },
+    "Extract Metadata": {
+      "main": [[{ "node": "Needs OCR?", "type": "main", "index": 0 }]]
+    },
+    "Needs OCR?": {
+      "main": [
+        [{ "node": "OCR with Vision AI", "type": "main", "index": 0 }],
+        [{ "node": "Merge OCR Path", "type": "main", "index": 0 }]
+      ]
+    },
+    "OCR with Vision AI": {
+      "main": [[{ "node": "Store OCR Result", "type": "main", "index": 0 }]]
+    },
+    "Store OCR Result": {
+      "main": [[{ "node": "Merge OCR Path", "type": "main", "index": 1 }]]
+    },
+    "Merge OCR Path": {
+      "main": [[{ "node": "Generate Embedding", "type": "main", "index": 0 }]]
+    },
+    "Generate Embedding": {
+      "main": [[{ "node": "Prepare Vector Data", "type": "main", "index": 0 }]]
+    },
+    "Prepare Vector Data": {
+      "main": [[{ "node": "Update File Record", "type": "main", "index": 0 }]]
+    },
+    "Update File Record": {
+      "main": [[{ "node": "Trigger Timeline Update", "type": "main", "index": 0 }]]
+    },
+    "Trigger Timeline Update": {
+      "main": [
+        [
+          { "node": "Build Response", "type": "main", "index": 0 },
+          { "node": "Save Metrics", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Build Response": {
+      "main": [[{ "node": "Respond Success", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 1,
+  "updatedAt": "2025-11-15T00:00:00.000Z",
+  "versionId": "1"
+}
+
+
+

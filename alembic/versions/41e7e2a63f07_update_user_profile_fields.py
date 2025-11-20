@@ -17,14 +17,14 @@ depends_on = None
 
 
 def upgrade() -> None:
-    # Add profile fields to users table
-    op.add_column('users', sa.Column('profile_image_url', sa.String(length=500), nullable=True))
-    op.add_column('users', sa.Column('phone', sa.String(length=50), nullable=True))
-    op.add_column('users', sa.Column('bio', sa.Text(), nullable=True))
+    # Add profile fields to users table (idempotent)
+    op.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS profile_image_url VARCHAR(500)")
+    op.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS phone VARCHAR(50)")
+    op.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS bio TEXT")
 
 
 def downgrade() -> None:
     # Remove profile fields from users table
-    op.drop_column('users', 'bio')
-    op.drop_column('users', 'phone')
-    op.drop_column('users', 'profile_image_url')
+    op.execute("ALTER TABLE users DROP COLUMN IF EXISTS bio")
+    op.execute("ALTER TABLE users DROP COLUMN IF EXISTS phone")
+    op.execute("ALTER TABLE users DROP COLUMN IF EXISTS profile_image_url")

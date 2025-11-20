@@ -17,18 +17,18 @@ depends_on = None
 
 
 def upgrade() -> None:
-    # Add organization fields
-    op.add_column('organizations', sa.Column('logo_url', sa.String(length=500), nullable=True))
-    op.add_column('organizations', sa.Column('website', sa.String(length=200), nullable=True))
-    op.add_column('organizations', sa.Column('company_size', sa.String(length=50), nullable=True))
-    op.add_column('organizations', sa.Column('industry', sa.String(length=100), nullable=True))
-    op.add_column('organizations', sa.Column('description', sa.Text(), nullable=True))
+    # Add organization fields (idempotent)
+    op.execute("ALTER TABLE organizations ADD COLUMN IF NOT EXISTS logo_url VARCHAR(500)")
+    op.execute("ALTER TABLE organizations ADD COLUMN IF NOT EXISTS website VARCHAR(200)")
+    op.execute("ALTER TABLE organizations ADD COLUMN IF NOT EXISTS company_size VARCHAR(50)")
+    op.execute("ALTER TABLE organizations ADD COLUMN IF NOT EXISTS industry VARCHAR(100)")
+    op.execute("ALTER TABLE organizations ADD COLUMN IF NOT EXISTS description TEXT")
 
 
 def downgrade() -> None:
     # Remove organization fields
-    op.drop_column('organizations', 'description')
-    op.drop_column('organizations', 'industry')
-    op.drop_column('organizations', 'company_size')
-    op.drop_column('organizations', 'website')
-    op.drop_column('organizations', 'logo_url')
+    op.execute("ALTER TABLE organizations DROP COLUMN IF EXISTS description")
+    op.execute("ALTER TABLE organizations DROP COLUMN IF EXISTS industry")
+    op.execute("ALTER TABLE organizations DROP COLUMN IF EXISTS company_size")
+    op.execute("ALTER TABLE organizations DROP COLUMN IF EXISTS website")
+    op.execute("ALTER TABLE organizations DROP COLUMN IF EXISTS logo_url")

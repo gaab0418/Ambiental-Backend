@@ -1,4 +1,5 @@
 from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Boolean, BigInteger
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.database import Base
@@ -16,6 +17,12 @@ class ChatFile(Base):
     original_filename = Column(String(255), nullable=False)
     mime_type = Column(String(100), nullable=False)
     size_bytes = Column(BigInteger, nullable=False)
+    file_hash = Column(String(64), nullable=True)
+    file_version = Column(Integer, nullable=False, default=1)
+    category = Column(String(100), nullable=True)
+    status = Column(String(50), nullable=False, default="uploaded")
+    metadata_json = Column(JSONB, nullable=True)
+    vectorized_at = Column(DateTime(timezone=True), nullable=True)
     
     # Storage and encryption
     storage_path = Column(String(500), nullable=False)

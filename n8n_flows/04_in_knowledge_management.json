@@ -1,0 +1,255 @@
+{
+  "name": "IN Knowledge Management",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "in-upload",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [250, 300],
+      "webhookId": "in-upload-webhook"
+    },
+    {
+      "parameters": {
+        "functionCode": "// Validate IN upload request\nconst body = $input.item.json.body;\nconst headers = $input.item.json.headers;\n\nif (!headers.authorization) {\n  throw new Error('Missing Authorization header');\n}\n\nif (!body.municipality || !body.state || !body.instruction_number || !body.version) {\n  throw new Error('Missing required fields: municipality, state, instruction_number, version');\n}\n\nif (!body.valid_from) {\n  throw new Error('Missing required field: valid_from');\n}\n\nreturn {\n  json: {\n    municipality: body.municipality,\n    state: body.state,\n    instruction_number: body.instruction_number,\n    version: body.version,\n    valid_from: body.valid_from,\n    valid_until: body.valid_until || null,\n    content_text: body.content_text || null,\n    content_url: body.content_url || null,\n    metadata: body.metadata || {}\n  }\n};"
+      },
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [450, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id, version, is_current FROM municipal_instructions WHERE municipality = {{ JSON.stringify($json.municipality) }} AND state = {{ JSON.stringify($json.state) }} AND instruction_number = {{ JSON.stringify($json.instruction_number) }} ORDER BY valid_from DESC LIMIT 1"
+      },
+      "id": "check-existing",
+      "name": "Check Existing IN",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [650, 300]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Compare with existing version\nconst newData = $('Validate Input').item.json;\nconst existingData = $input.item.json;\n\nlet isNewVersion = true;\nlet previousVersion = null;\nlet previousId = null;\n\nif (existingData && existingData.length > 0) {\n  const existing = Array.isArray(existingData) ? existingData[0] : existingData;\n  previousVersion = existing.version;\n  previousId = existing.id;\n  \n  // Check if version is truly different\n  if (existing.version === newData.version) {\n    isNewVersion = false;\n  }\n}\n\nreturn {\n  json: {\n    ...newData,\n    is_new_version: isNewVersion,\n    previous_version: previousVersion,\n    previous_id: previousId,\n    should_insert: isNewVersion\n  }\n};"
+      },
+      "id": "compare-versions",
+      "name": "Compare Versions",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [850, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.should_insert }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "should-insert",
+      "name": "Should Insert?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1050, 300]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Return duplicate message\nconst data = $input.item.json;\n\nreturn {\n  json: {\n    status: 'duplicate',\n    message: `IN ${data.instruction_number} versão ${data.version} já existe`,\n    municipality: data.municipality,\n    state: data.state\n  }\n};"
+      },
+      "id": "duplicate-response",
+      "name": "Duplicate Response",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [1050, 450]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "table": "municipal_instructions",
+        "updateKey": "id",
+        "columns": "is_current",
+        "values": "false",
+        "where": "municipality = {{ JSON.stringify($json.municipality) }} AND state = {{ JSON.stringify($json.state) }} AND instruction_number = {{ JSON.stringify($json.instruction_number) }} AND is_current = true"
+      },
+      "id": "deactivate-old",
+      "name": "Deactivate Old Version",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [1250, 300]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "table": "municipal_instructions",
+        "columns": "municipality, state, instruction_number, version, valid_from, valid_until, is_current, content_text, content_url, metadata_json, created_at",
+        "values": "={{ JSON.stringify($json.municipality) }}, ={{ JSON.stringify($json.state) }}, ={{ JSON.stringify($json.instruction_number) }}, ={{ JSON.stringify($json.version) }}, ={{ JSON.stringify($json.valid_from) }}, ={{ $json.valid_until ? JSON.stringify($json.valid_until) : 'NULL' }}, true, ={{ $json.content_text ? JSON.stringify($json.content_text) : 'NULL' }}, ={{ $json.content_url ? JSON.stringify($json.content_url) : 'NULL' }}, ={{ JSON.stringify($json.metadata) }}, NOW()"
+      },
+      "id": "insert-new-in",
+      "name": "Insert New IN",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [1450, 300],
+      "returnAll": true
+    },
+    {
+      "parameters": {
+        "functionCode": "// Generate diff description (simplified)\nconst data = $input.item.json;\n\nlet diffDescription = '';\n\nif (data.previous_version) {\n  diffDescription = `Atualização da versão ${data.previous_version} para ${data.version}`;\n} else {\n  diffDescription = `Nova IN ${data.instruction_number} versão ${data.version} cadastrada`;\n}\n\nreturn {\n  json: {\n    ...data,\n    diff_description: diffDescription\n  }\n};"
+      },
+      "id": "generate-diff",
+      "name": "Generate Diff",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [1650, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT DISTINCT ct.id as thread_id, ct.organization_id FROM chat_threads ct WHERE ct.municipality = {{ JSON.stringify($json.municipality) }} AND ct.state = {{ JSON.stringify($json.state) }}"
+      },
+      "id": "find-impacted-processes",
+      "name": "Find Impacted Processes",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [1850, 300]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Prepare notifications for impacted processes\nconst inData = $('Generate Diff').item.json;\nconst processes = $input.all().map(item => item.json);\n\nconst notifications = [];\n\nfor (const process of processes) {\n  notifications.push({\n    thread_id: process.thread_id,\n    org_id: process.organization_id,\n    event_type: 'in_updated',\n    title: 'Atualização de IN',\n    description: inData.diff_description,\n    municipality: inData.municipality,\n    state: inData.state,\n    in_number: inData.instruction_number,\n    new_version: inData.version\n  });\n}\n\nreturn notifications.map(notif => ({ json: notif }));"
+      },
+      "id": "prepare-notifications",
+      "name": "Prepare Notifications",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [2050, 300]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "table": "chat_timeline_events",
+        "columns": "thread_id, event_type, title, description, status, event_metadata, event_date",
+        "values": "={{ $json.thread_id }}, ={{ JSON.stringify($json.event_type) }}, ={{ JSON.stringify($json.title) }}, ={{ JSON.stringify($json.description) }}, 'alert', ={{ JSON.stringify({municipality: $json.municipality, state: $json.state, in_number: $json.in_number, new_version: $json.new_version}) }}, NOW()"
+      },
+      "id": "insert-notifications",
+      "name": "Insert Timeline Alerts",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [2250, 300]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Build success response\nconst inData = $('Generate Diff').item.json;\nconst processes = $('Find Impacted Processes').all();\n\nreturn {\n  json: {\n    status: 'success',\n    message: 'IN cadastrada com sucesso',\n    in_number: inData.instruction_number,\n    version: inData.version,\n    municipality: inData.municipality,\n    state: inData.state,\n    diff: inData.diff_description,\n    impacted_processes: processes.length\n  }\n};"
+      },
+      "id": "build-response",
+      "name": "Build Response",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [2450, 300]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "table": "audit_logs",
+        "columns": "action, resource_type, resource_id, details, created_at",
+        "values": "'in_uploaded', 'municipal_instruction', ={{ $('Insert New IN').item.json.id }}, ={{ JSON.stringify($json) }}, NOW()"
+      },
+      "id": "audit-log",
+      "name": "Audit Log",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [2450, 400]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}"
+      },
+      "id": "respond-success",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [2650, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}"
+      },
+      "id": "respond-duplicate",
+      "name": "Respond Duplicate",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1250, 450]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [[{ "node": "Validate Input", "type": "main", "index": 0 }]]
+    },
+    "Validate Input": {
+      "main": [[{ "node": "Check Existing IN", "type": "main", "index": 0 }]]
+    },
+    "Check Existing IN": {
+      "main": [[{ "node": "Compare Versions", "type": "main", "index": 0 }]]
+    },
+    "Compare Versions": {
+      "main": [[{ "node": "Should Insert?", "type": "main", "index": 0 }]]
+    },
+    "Should Insert?": {
+      "main": [
+        [{ "node": "Deactivate Old Version", "type": "main", "index": 0 }],
+        [{ "node": "Duplicate Response", "type": "main", "index": 0 }]
+      ]
+    },
+    "Duplicate Response": {
+      "main": [[{ "node": "Respond Duplicate", "type": "main", "index": 0 }]]
+    },
+    "Deactivate Old Version": {
+      "main": [[{ "node": "Insert New IN", "type": "main", "index": 0 }]]
+    },
+    "Insert New IN": {
+      "main": [[{ "node": "Generate Diff", "type": "main", "index": 0 }]]
+    },
+    "Generate Diff": {
+      "main": [[{ "node": "Find Impacted Processes", "type": "main", "index": 0 }]]
+    },
+    "Find Impacted Processes": {
+      "main": [[{ "node": "Prepare Notifications", "type": "main", "index": 0 }]]
+    },
+    "Prepare Notifications": {
+      "main": [[{ "node": "Insert Timeline Alerts", "type": "main", "index": 0 }]]
+    },
+    "Insert Timeline Alerts": {
+      "main": [
+        [
+          { "node": "Build Response", "type": "main", "index": 0 },
+          { "node": "Audit Log", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Build Response": {
+      "main": [[{ "node": "Respond Success", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 1,
+  "updatedAt": "2025-11-15T00:00:00.000Z",
+  "versionId": "1"
+}
+
+
+
