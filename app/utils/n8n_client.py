@@ -29,6 +29,47 @@ class N8NClient:
         self.timeout = 30.0  # 30 seconds timeout
         self.max_retries = 2
     
+    async def ping(self) -> bool:
+        """
+        Ping the N8N health endpoint to verify availability.
+        Returns True when N8N responds with 200 and {"status":"ok"}.
+        """
+        if not self.webhook_url:
+            logger.warning("n8n_webhook_url not configured - skipping health check")
+            return False
+        
+        # Build base URL by removing the last path segment (e.g., /chat)
+        base_url = self.webhook_url.rstrip("/")
+        if "/" in base_url:
+            base_url = base_url.rsplit("/", 1)[0]
+        ping_url = f"{base_url}/healthz"
+        
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                response = await client.get(ping_url)
+                if response.status_code != 200:
+                    logger.warning(
+                        "N8N health check failed with status %s at %s",
+                        response.status_code,
+                        ping_url
+                    )
+                    return False
+                
+                try:
+                    payload = response.json()
+                except ValueError:
+                    logger.warning("N8N health check returned non-JSON payload")
+                    return False
+                
+                if payload.get("status") == "ok":
+                    return True
+                
+                logger.warning("N8N health check payload missing status=ok: %s", payload)
+                return False
+        except Exception as exc:  # pragma: no cover - network errors
+            logger.warning("N8N health check error: %s", exc)
+            return False
+    
     def _generate_hmac_signature(self, payload: str, timestamp: str) -> str:
         """
         Generate HMAC-SHA256 signature for payload.

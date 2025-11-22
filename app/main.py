@@ -7,6 +7,7 @@ from app.api.v1 import auth, organization, billing, master, logs, metrics, templ
 from app.middleware.audit import AuditMiddleware
 from app.database import engine
 from app.models import Base
+from app.utils.n8n_client import n8n_client
 import os
 
 
@@ -19,6 +20,15 @@ async def lifespan(app: FastAPI):
     
     print("[OK] Ambiental SaaS API iniciada!")
     print("[OK] Sistema configurado e funcionando")
+    
+    try:
+        ping_ok = await n8n_client.ping()
+        if ping_ok:
+            print("[OK] N8N webhook está online")
+        else:
+            print("[WARNING] N8N webhook não está respondendo - verifique a conectividade")
+    except Exception as exc:  # pragma: no cover - startup guard
+        print(f"[WARNING] Falha ao checar N8N webhook: {exc}")
     
     yield
     
