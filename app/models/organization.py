@@ -36,3 +36,8 @@ class Organization(Base):
     licenses = relationship("License", back_populates="organization")
     connections = relationship("OrgConnection", back_populates="organization", cascade="all, delete-orphan")
     flow_metrics = relationship("FlowMetric", back_populates="organization", cascade="all, delete-orphan")
+    
+    # New module relationships
+    agenda_events = relationship("AgendaEvent", back_populates="organization", cascade="all, delete-orphan")
+    documents = relationship("Document", back_populates="organization", cascade="all, delete-orphan")
+    processes = relationship("Process", back_populates="organization", cascade="all, delete-orphan")

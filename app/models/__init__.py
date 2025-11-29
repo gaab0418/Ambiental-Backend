@@ -15,6 +15,10 @@ from app.models.user_organization_association import UserOrganizationAssociation
 from app.models.org_connection import OrgConnection
 from app.models.municipal_instruction import MunicipalInstruction
 from app.models.flow_metric import FlowMetric
+from app.models.agenda import AgendaEvent, AgendaStatus, AgendaPriority
+from app.models.document import Document, DocumentStatus
+from app.models.legislation import Legislation, LegislationStatus, JurisdictionScope, ComplianceLevel
+from app.models.process import Process, ProcessStatus, ProcessPriority, ProcessTimelineEntry
 from app.database import Base
 
 __all__ = [
@@ -35,5 +39,19 @@ __all__ = [
     "UserOrganizationAssociation",
     "OrgConnection",
     "MunicipalInstruction",
-    "FlowMetric"
+    "FlowMetric",
+    # New modules
+    "AgendaEvent",
+    "AgendaStatus",
+    "AgendaPriority",
+    "Document",
+    "DocumentStatus",
+    "Legislation",
+    "LegislationStatus",
+    "JurisdictionScope",
+    "ComplianceLevel",
+    "Process",
+    "ProcessStatus",
+    "ProcessPriority",
+    "ProcessTimelineEntry",
 ]
