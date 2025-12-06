@@ -655,7 +655,8 @@ def test_chat_flow_with_n8n_callback(client, admin_context):
     timeline_resp = client.get(f"/api/chat/threads/{thread_id}/timeline", headers=headers)
     assert timeline_resp.status_code == 200
     events = timeline_resp.json()
-    assert any(event["title"] == "Resposta da IA recebida" for event in events)
+    # Check for the timeline event created by the callback (not the auto-generated AI response event)
+    assert any(event["title"] == "Análise de documentos" for event in events)
 
 
 def test_chat_files_crud_flow(client, db_session, admin_context):

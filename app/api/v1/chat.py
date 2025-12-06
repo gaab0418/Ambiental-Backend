@@ -13,7 +13,7 @@ from app.models.chat_message import ChatMessage, MessageRole
 from app.models.chat_file import ChatFile
 from app.models.chat_timeline_event import ChatTimelineEvent, TimelineEventType, TimelineEventStatus
 from app.schemas.chat import (
-    ChatThreadCreate, ChatThreadResponse,
+    ChatThreadCreate, ChatThreadUpdate, ChatThreadResponse,
     ChatMessageCreate, ChatMessageResponse, ChatMessagesResponse,
     N8NCallbackMessage
 )
@@ -257,7 +257,7 @@ async def send_chat_message(
         # We use a new client here to ensure we don't have async issues if running in a sync context, 
         # but since this is an async path, we should use AsyncClient
         webhook_url = f"{settings.n8n_webhook_url.rstrip('/')}/chat"
-        async with httpx.AsyncClient(timeout=60.0) as client:
+        async with httpx.AsyncClient(timeout=90.0) as client:
             response = await client.post(
                 webhook_url,
                 json=payload
@@ -375,6 +375,74 @@ async def delete_chat_thread(
     )
     
     return {"message": "Chat thread deleted successfully"}
+
+
+@router.patch("/threads/{thread_id}", response_model=ChatThreadResponse)
+async def update_chat_thread(
+    thread_id: int,
+    update_data: ChatThreadUpdate,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """Update a chat thread (e.g., update title)."""
+    
+    # Check if thread exists and belongs to user
+    thread = db.query(ChatThread).filter(
+        ChatThread.id == thread_id,
+        ChatThread.user_id == current_user.id
+    ).first()
+    
+    if not thread:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Chat thread not found"
+        )
+    
+    # Update title - schema already validates min/max length
+    old_title = thread.title
+    thread.title = update_data.title.strip()
+    changes = {"title": {"old": old_title, "new": thread.title}}
+    thread.updated_at = datetime.now(timezone.utc)
+    
+    db.commit()
+    db.refresh(thread)
+    
+    # Get user's organization for audit
+    user_assoc = db.query(UserOrganizationAssociation).filter(
+        UserOrganizationAssociation.user_id == current_user.id
+    ).first()
+    
+    # Log audit
+    AuditLogger.log_update(
+        db=db,
+        entity_type="ChatThread",
+        entity_id=thread.id,
+        user_id=current_user.id,
+        organization_id=user_assoc.organization_id if user_assoc else None,
+        changes=changes
+    )
+    
+    # Return enriched thread data
+    return {
+        "id": thread.id,
+        "user_id": thread.user_id,
+        "organization_id": thread.organization_id,
+        "title": thread.title,
+        "is_active": thread.is_active,
+        "created_at": thread.created_at,
+        "updated_at": thread.updated_at,
+        "files_count": db.query(ChatFile).filter(
+            ChatFile.thread_id == thread.id,
+            ChatFile.is_active == True
+        ).count(),
+        "has_timeline": db.query(ChatTimelineEvent).filter(
+            ChatTimelineEvent.thread_id == thread.id
+        ).count() > 0,
+        "type": thread.type,
+        "process_code": thread.process_code,
+        "process_id": thread.process_id,
+        "law_id": thread.law_id
+    }
 
 
 @router.post("/threads/{thread_id}/messages/callback")
