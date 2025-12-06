@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status, Request, H
 from sqlalchemy.orm import Session
 from typing import List, Optional
 import asyncio
+import httpx
 import logging
 from datetime import datetime, timezone
 
@@ -222,83 +223,81 @@ async def send_chat_message(
         ChatFile.is_active == True
     ).all()
     
-    # Build file metadata for N8N
-    files_data = []
-    for file in chat_files:
-        # Build download URL for N8N to access the file
-        download_url = f"{settings.n8n_webhook_url.rsplit('/', 2)[0]}/api/chat/threads/{thread_id}/files/{file.id}/content"
-        files_data.append({
-            "id": file.id,
-            "filename": file.original_filename,
-            "mime_type": file.mime_type,
-            "size_bytes": file.size_bytes,
-            "download_url": download_url
-        })
-    
-    # Get recent message history (last 10 messages for context)
-    recent_messages = db.query(ChatMessage).filter(
-        ChatMessage.thread_id == thread_id
-    ).order_by(ChatMessage.created_at.desc()).limit(10).all()
-    
-    message_history = [
-        {
-            "role": msg.role.value,
-            "content": msg.content,
-            "created_at": msg.created_at.isoformat()
-        }
-        for msg in reversed(recent_messages)  # Reverse to get chronological order
-    ]
-    
     # Create timeline event for AI processing
-    processing_event = ChatTimelineEvent(
+    timeline_event = ChatTimelineEvent(
         thread_id=thread_id,
         organization_id=user_assoc.organization_id,
         type=TimelineEventType.AI_PROCESSING,
         status=TimelineEventStatus.IN_PROGRESS,
-        title="Processando mensagem com IA",
-        description="Aguardando resposta do agente de IA...",
-        order_index=0
+        title="Processando mensagem",
+        description="Enviando para o assistente virtual..."
     )
-    db.add(processing_event)
+    db.add(timeline_event)
     db.commit()
-    db.refresh(processing_event)
     
-    # Trigger N8N AI workflow
+    # Call N8N Webhook Synchronously
     try:
-        n8n_response = await n8n_client.start_ai_workflow(
+        # Prepare simple payload as requested
+        payload = {
+            "thread_id": thread_id,
+            "message": message_data.content.strip()
+        }
+        
+        # Make synchronous request to N8N
+        # We use a new client here to ensure we don't have async issues if running in a sync context, 
+        # but since this is an async path, we should use AsyncClient
+        webhook_url = f"{settings.n8n_webhook_url.rstrip('/')}/chat"
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            response = await client.post(
+                webhook_url,
+                json=payload
+            )
+            response.raise_for_status()
+            response_data = response.json()
+            
+        # Extract output
+        assistant_text = response_data.get("output", "")
+        
+        if not assistant_text:
+            logger.warning(f"N8N response missing 'output' field: {response_data}")
+            assistant_text = "Desculpe, não consegui processar sua resposta."
+
+        # Create assistant message
+        assistant_message = ChatMessage(
             thread_id=thread_id,
-            organization_id=user_assoc.organization_id,
-            user_id=current_user.id,
-            message_content=message_data.content.strip(),
-            files=files_data,
-            message_history=message_history,
-            metadata={
-                "processing_event_id": processing_event.id
-            }
+            role=MessageRole.ASSISTANT,
+            content=assistant_text
         )
         
-        logger.info(f"N8N workflow triggered for thread {thread_id}: {n8n_response}")
+        db.add(assistant_message)
+        db.commit()
+        db.refresh(assistant_message)
         
-    except N8NClientError as e:
-        logger.error(f"Failed to trigger N8N workflow for thread {thread_id}: {str(e)}")
+        # Log audit for assistant message
+        AuditLogger.log_create(
+            db=db,
+            entity_type="ChatMessage",
+            entity_id=assistant_message.id,
+            user_id=current_user.id,
+            organization_id=user_assoc.organization_id,
+            changes={"role": "ASSISTANT", "thread_id": thread_id, "source": "n8n_sync"}
+        )
         
-        # Update processing event to error
-        processing_event.status = TimelineEventStatus.ERROR
-        processing_event.title = "Erro ao processar mensagem"
-        processing_event.description = "Falha ao comunicar com o agente de IA. Tente novamente."
+        # Update thread timestamp
+        thread.updated_at = datetime.now(timezone.utc)
         db.commit()
         
-        # Still return the user message
-        # The assistant response will come via callback when N8N processes it
-        return [user_message]
-    
-    # Update thread timestamp
-    thread.updated_at = datetime.now(timezone.utc)
-    db.commit()
-    
-    # Return only the user message
-    # The assistant response will be delivered via N8N callback
-    return [user_message]
+        return [user_message, assistant_message]
+
+    except Exception as e:
+        logger.error(f"Failed to call N8N webhook: {str(e)}")
+        
+        # Return just the user message in case of error, or raise?
+        # Let's raise an error to let the user know it failed
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Erro ao comunicar com o assistente: {str(e)}"
+        )
 
 
 @router.delete("/threads/{thread_id}")

@@ -53,3 +53,5 @@ class Document(Base):
     organization = relationship("Organization", back_populates="documents")
     uploaded_by = relationship("User", backref="uploaded_documents")
 
+
+

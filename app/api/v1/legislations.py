@@ -246,3 +246,5 @@ async def delete_legislation(
     
     return {"message": f"Legislation '{leg_title}' deleted successfully"}
 
+
+

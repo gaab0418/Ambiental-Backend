@@ -72,3 +72,5 @@ class AgendaEventListResponse(BaseModel):
     limit: int
     offset: int
 
+
+

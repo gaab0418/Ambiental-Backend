@@ -213,6 +213,42 @@ def stub_n8n_client(monkeypatch):
         "app.api.v1.chat.n8n_client.start_ai_workflow",
         fake_start_ai_workflow
     )
+    
+    # Define mocks globally to avoid redefinition
+    import httpx
+    
+    class MockResponse:
+        def __init__(self, status_code=200, json_data=None):
+            self.status_code = status_code
+            self._json_data = json_data or {"output": "Resposta mockada do endpoint"}
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                request = httpx.Request("POST", "http://mock")
+                response = httpx.Response(self.status_code, request=request)
+                raise httpx.HTTPStatusError("Mock error", request=request, response=response)
+
+        def json(self):
+            return self._json_data
+
+    class MockAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+        
+        async def __aenter__(self): 
+            return self
+        
+        async def __aexit__(self, *args): 
+            pass
+
+        async def post(self, *args, **kwargs):
+            return MockResponse()
+
+        async def get(self, *args, **kwargs):
+            return MockResponse(json_data={"status": "ok"})
+
+    # PATCH GLOBALLY on the httpx module itself
+    monkeypatch.setattr("httpx.AsyncClient", MockAsyncClient)
     yield
 
 
@@ -384,9 +420,10 @@ def test_verify_n8n_callback_signature_invalid_timestamp_format(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_n8n_client_success(monkeypatch):
-    settings.n8n_webhook_url = "https://example.com/webhook/test"
-    settings.n8n_jwt_token = "test-jwt-token"
-    settings.n8n_signing_secret = "test-hmac-secret"
+    monkeypatch.setattr(settings, "n8n_webhook_url", "https://example.com/webhook/test")
+    monkeypatch.setattr(settings, "n8n_jwt_token", "test-jwt-token")
+    monkeypatch.setattr(settings, "n8n_signing_secret", "test-hmac-secret")
+    
     client = N8NClient()
     client.max_retries = 0
 
@@ -413,7 +450,7 @@ async def test_n8n_client_success(monkeypatch):
             return False
 
         async def post(self, url, **kwargs):
-            assert url == settings.n8n_webhook_url
+            assert url == "https://example.com/webhook/test"
             content = kwargs.get("content")
             headers = kwargs.get("headers", {})
             data = json.loads(content)
@@ -426,7 +463,7 @@ async def test_n8n_client_success(monkeypatch):
             assert "metadata" in data
             assert "X-Timestamp" in headers
             assert "X-Signature" in headers
-            assert headers.get("Authorization") == f"Bearer {settings.n8n_jwt_token}"
+            assert headers.get("Authorization") == "Bearer test-jwt-token"
             return DummyResponse()
 
     monkeypatch.setattr("app.utils.n8n_client.httpx.AsyncClient", DummyAsyncClient)
@@ -446,8 +483,9 @@ async def test_n8n_client_success(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_n8n_client_timeout(monkeypatch):
-    settings.n8n_webhook_url = "https://example.com/webhook/test-timeout"
-    settings.n8n_signing_secret = "test-hmac-secret-timeout"
+    monkeypatch.setattr(settings, "n8n_webhook_url", "https://example.com/webhook/test-timeout")
+    monkeypatch.setattr(settings, "n8n_signing_secret", "test-hmac-secret-timeout")
+    
     client = N8NClient()
     client.max_retries = 0
 
@@ -479,8 +517,9 @@ async def test_n8n_client_timeout(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_n8n_client_http_error(monkeypatch):
-    settings.n8n_webhook_url = "https://example.com/webhook/test-error"
-    settings.n8n_signing_secret = "test-hmac-secret-error"
+    monkeypatch.setattr(settings, "n8n_webhook_url", "https://example.com/webhook/test-error")
+    monkeypatch.setattr(settings, "n8n_signing_secret", "test-hmac-secret-error")
+    
     client = N8NClient()
     client.max_retries = 0
 
@@ -493,7 +532,7 @@ async def test_n8n_client_http_error(monkeypatch):
         def raise_for_status(self):
             raise httpx.HTTPStatusError(
                 "Server error",
-                request=httpx.Request("POST", settings.n8n_webhook_url),
+                request=httpx.Request("POST", "https://example.com/webhook/test-error"),
                 response=httpx.Response(self.status_code),
             )
 

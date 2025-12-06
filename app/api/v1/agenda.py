@@ -292,3 +292,5 @@ async def delete_agenda_event(
     
     return {"message": f"Agenda event '{event_title}' deleted successfully"}
 
+
+

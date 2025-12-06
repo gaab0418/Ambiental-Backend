@@ -98,3 +98,5 @@ class LegislationStatsResponse(BaseModel):
     emAtualizacao: int
     revogadas: int
 
+
+

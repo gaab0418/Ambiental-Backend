@@ -52,3 +52,5 @@ class AgendaEvent(Base):
     organization = relationship("Organization", back_populates="agenda_events")
     created_by = relationship("User", backref="created_agenda_events")
 
+
+
