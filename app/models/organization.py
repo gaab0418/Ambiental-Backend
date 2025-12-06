@@ -20,6 +20,12 @@ class Organization(Base):
     industry = Column(String(100), nullable=True)
     description = Column(Text, nullable=True)
     is_active = Column(Boolean, default=True, nullable=False)
+    
+    # Multi-tenant and activation fields
+    mode = Column(String(20), nullable=False, default="saas")  # saas or on_prem
+    status = Column(String(20), nullable=False, default="active")  # active, trial, blocked
+    activation_key_hash = Column(String(255), nullable=True)
+    
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
@@ -28,3 +34,10 @@ class Organization(Base):
     users = relationship("User", secondary="user_organization_association", back_populates="organizations", viewonly=True)
     subscriptions = relationship("Subscription", back_populates="organization")
     licenses = relationship("License", back_populates="organization")
+    connections = relationship("OrgConnection", back_populates="organization", cascade="all, delete-orphan")
+    flow_metrics = relationship("FlowMetric", back_populates="organization", cascade="all, delete-orphan")
+    
+    # New module relationships
+    agenda_events = relationship("AgendaEvent", back_populates="organization", cascade="all, delete-orphan")
+    documents = relationship("Document", back_populates="organization", cascade="all, delete-orphan")
+    processes = relationship("Process", back_populates="organization", cascade="all, delete-orphan")

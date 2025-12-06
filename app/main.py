@@ -1,19 +1,48 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from contextlib import asynccontextmanager
 from app.config import settings
-from app.api.v1 import auth, organization, billing, master, logs, metrics, templates, upload, consultant, chat
+from app.api.v1 import auth, organization, billing, master, logs, metrics, templates, upload, consultant, chat, chat_files, chat_timeline, activation, agenda, documents, legislations, processes
 from app.middleware.audit import AuditMiddleware
 from app.database import engine
 from app.models import Base
+from app.utils.n8n_client import n8n_client
 import os
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Lifespan event handler for startup and shutdown"""
+    # Startup
+    # Validação já foi feita no main.py raiz, não precisa validar novamente aqui
+    # para evitar conflitos com o seed que foi executado
+    
+    print("[OK] Ambiental SaaS API iniciada!")
+    print("[OK] Sistema configurado e funcionando")
+    
+    try:
+        ping_ok = await n8n_client.ping()
+        if ping_ok:
+            print("[OK] N8N webhook está online")
+        else:
+            print("[WARNING] N8N webhook não está respondendo - verifique a conectividade")
+    except Exception as exc:  # pragma: no cover - startup guard
+        print(f"[WARNING] Falha ao checar N8N webhook: {exc}")
+    
+    yield
+    
+    # Shutdown (if needed)
+    pass
+
 
 app = FastAPI(
     title="Ambiental SaaS API",
     description="Backend completo para plataforma SaaS Ambiental",
     version="1.0.0",
     docs_url="/docs",
-    redoc_url="/redoc"
+    redoc_url="/redoc",
+    lifespan=lifespan
 )
 
 # CORS middleware
@@ -51,18 +80,15 @@ app.include_router(templates.router, prefix="/api/templates", tags=["Templates"]
 app.include_router(upload.router, prefix="/api/upload", tags=["Upload"])
 app.include_router(consultant.router, prefix="/api/consultant", tags=["Consultant"])
 app.include_router(chat.router, prefix="/api/chat", tags=["Chat"])
+app.include_router(chat_files.router, prefix="/api/chat", tags=["Chat Files"])
+app.include_router(chat_timeline.router, prefix="/api/chat", tags=["Chat Timeline"])
+app.include_router(activation.router, prefix="/api/v1", tags=["Activation"])
 
-
-@app.on_event("startup")
-async def startup_event():
-    """Validate database before starting API"""
-    from app.utils.db_validator import validate_database_or_exit
-    
-    # Validate database connection and tables, exit if not ready
-    validate_database_or_exit()
-    
-    print("[OK] Ambiental SaaS API iniciada!")
-    print("[OK] Sistema configurado e funcionando")
+# New module routers
+app.include_router(agenda.router, prefix="/api/agenda", tags=["Agenda"])
+app.include_router(documents.router, prefix="/api/documents", tags=["Documents"])
+app.include_router(legislations.router, prefix="/api/legislations", tags=["Legislations"])
+app.include_router(processes.router, prefix="/api/processes", tags=["Processes"])
 
 
 @app.get("/")

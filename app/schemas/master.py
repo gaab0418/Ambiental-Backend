@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, ConfigDict
 from typing import Optional, List
 from datetime import datetime
 from decimal import Decimal
@@ -17,8 +17,7 @@ class MasterOrganizationResponse(BaseModel):
     user_count: int
     subscription_status: str
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class MasterOrganizationCreateRequest(BaseModel):
@@ -87,8 +86,7 @@ class PlanResponse(BaseModel):
     is_system: bool
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class MasterSubscriptionUpdateRequest(BaseModel):
@@ -109,8 +107,7 @@ class MasterSubscriptionResponse(BaseModel):
     plan_price: Decimal
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class MasterUserResponse(BaseModel):
@@ -124,5 +121,4 @@ class MasterUserResponse(BaseModel):
     created_at: datetime
     last_login_at: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)

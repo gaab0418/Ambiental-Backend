@@ -61,18 +61,27 @@ async def login_for_access_token(
     
     # Update last login
     login_time = datetime.now(timezone.utc)
+    user_id = user.id  # Salvar ID antes de qualquer operação
     user.last_login_at = login_time
     try:
         db.commit()
         db.refresh(user)
         if user.last_login_at != login_time:
-            db.rollback()
-            db.query(User).filter(User.id == user.id).update({"last_login_at": login_time})
+            # Se o refresh falhou, usar update direto com o ID salvo
+            db.query(User).filter(User.id == user_id).update({"last_login_at": login_time})
             db.commit()
-            db.refresh(user)
+            # Recarregar o usuário após o update
+            user = db.query(User).filter(User.id == user_id).first()
     except Exception as e:
         db.rollback()
-        raise e
+        # Tentar novamente com update direto se o commit falhou
+        try:
+            db.query(User).filter(User.id == user_id).update({"last_login_at": login_time})
+            db.commit()
+            user = db.query(User).filter(User.id == user_id).first()
+        except Exception:
+            # Se ainda falhar, apenas logar o erro mas não bloquear o login
+            pass
     
     # Get all organizations the user belongs to
     user_orgs = db.query(UserOrganizationAssociation).filter(
@@ -278,7 +287,7 @@ async def register_new_organization(
     db.refresh(organization)
     
     # Create subscription
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     trial_end = now + timedelta(days=30)  # 30 days trial
     subscription = Subscription(
         organization_id=organization.id,
@@ -520,7 +529,7 @@ async def update_current_user(
     if user_data.password:
         current_user.hashed_password = get_password_hash(user_data.password)
     
-    current_user.updated_at = datetime.utcnow()
+    current_user.updated_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(current_user)
     

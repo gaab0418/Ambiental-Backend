@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.orm import Session
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 from app.database import get_db
 from app.models.user import User
@@ -226,7 +226,7 @@ async def upgrade_subscription(
     
     # Update subscription
     subscription.plan_id = new_plan.id
-    subscription.updated_at = datetime.utcnow()
+    subscription.updated_at = datetime.now(timezone.utc)
     
     # If upgrading to a plan with more users, create additional licenses
     current_license_count = db.query(License).filter(
@@ -284,8 +284,8 @@ async def cancel_subscription(
     
     # Cancel subscription
     subscription.status = SubscriptionStatus.CANCELED
-    subscription.canceled_at = datetime.utcnow()
-    subscription.updated_at = datetime.utcnow()
+    subscription.canceled_at = datetime.now(timezone.utc)
+    subscription.updated_at = datetime.now(timezone.utc)
     
     db.commit()
     

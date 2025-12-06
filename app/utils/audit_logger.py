@@ -140,3 +140,27 @@ class AuditLogger:
             user_agent=user_agent
         )
 
+    @staticmethod
+    def log_read(
+        db: Session,
+        entity_type: str,
+        entity_id: Optional[int] = None,
+        user_id: Optional[int] = None,
+        organization_id: Optional[int] = None,
+        changes: Optional[Dict[str, Any]] = None,
+        ip_address: Optional[str] = None,
+        user_agent: Optional[str] = None
+    ) -> Optional[AuditLog]:
+        """Log resource read/view action"""
+        return AuditLogger.log_action(
+            db=db,
+            action="READ",
+            entity_type=entity_type,
+            entity_id=entity_id,
+            user_id=user_id,
+            organization_id=organization_id,
+            changes=changes,
+            ip_address=ip_address,
+            user_agent=user_agent
+        )
+

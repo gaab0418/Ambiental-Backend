@@ -160,19 +160,8 @@ config.db
 .vscode/
 .idea/
 
-# Upload directories (keep structure but ignore content)
-uploads/profiles/*
-uploads/logos/*
-uploads/documents/*
-
-# Test files and temporary scripts
-test_*.py
-*_test.py
-check_*.py
-create_*.py
-*_status.md
-*_resultado.md
-*_updates*.md
+# Upload directories
+uploads/
 
 # PowerShell scripts
 *.ps1

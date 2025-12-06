@@ -36,21 +36,43 @@ def upgrade() -> None:
     
     # Migrate existing data from users table to association table
     # This preserves the current user-organization relationships
-    op.execute("""
-        INSERT INTO user_organization_association (user_id, organization_id, role_id, created_at)
-        SELECT id, organization_id, role_id, created_at
-        FROM users
-        WHERE organization_id IS NOT NULL
-    """)
+    # Only migrate if the column exists and has data
+    connection = op.get_bind()
+    inspector = sa.inspect(connection)
+    users_columns = [col['name'] for col in inspector.get_columns('users')]
+    
+    if 'organization_id' in users_columns and 'role_id' in users_columns:
+        op.execute("""
+            INSERT INTO user_organization_association (user_id, organization_id, role_id, created_at)
+            SELECT id, organization_id, role_id, created_at
+            FROM users
+            WHERE organization_id IS NOT NULL
+        """)
     
     # Remove role_id from users table (now in association table)
-    op.drop_constraint('users_role_id_fkey', 'users', type_='foreignkey')
-    op.drop_column('users', 'role_id')
+    # Only drop if they exist
+    connection = op.get_bind()
+    inspector = sa.inspect(connection)
+    users_columns = [col['name'] for col in inspector.get_columns('users')]
+    
+    if 'role_id' in users_columns:
+        try:
+            op.drop_constraint('users_role_id_fkey', 'users', type_='foreignkey')
+        except:
+            pass
+        op.drop_column('users', 'role_id')
     
     # Remove organization_id from users table (now in association table)
-    op.drop_constraint('users_organization_id_fkey', 'users', type_='foreignkey')
-    op.drop_index('ix_users_organization_id', table_name='users')
-    op.drop_column('users', 'organization_id')
+    if 'organization_id' in users_columns:
+        try:
+            op.drop_constraint('users_organization_id_fkey', 'users', type_='foreignkey')
+        except:
+            pass
+        try:
+            op.drop_index('ix_users_organization_id', table_name='users')
+        except:
+            pass
+        op.drop_column('users', 'organization_id')
 
 
 def downgrade() -> None:
