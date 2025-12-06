@@ -17,7 +17,7 @@ from app.models.user import User
 from app.models.document import Document, DocumentStatus
 from app.schemas.documents import (
     DocumentCreate, DocumentUpdate, DocumentResponse,
-    DocumentListResponse, DocumentStatusEnum
+    DocumentListResponse, DocumentStatusEnum, GeneratedDocumentCreate
 )
 from app.dependencies.auth import get_current_active_user, get_organization_from_token
 from app.utils.audit_logger import AuditLogger
@@ -47,6 +47,91 @@ def serialize_tags(tags: Optional[List[str]]) -> Optional[str]:
     if not tags:
         return None
     return json.dumps(tags)
+
+
+@router.post("/generate", response_model=DocumentResponse, status_code=status.HTTP_201_CREATED)
+async def save_generated_document(
+    request: Request,
+    document_data: GeneratedDocumentCreate,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """Save a document generated from a template."""
+    org_id = get_organization_from_token(request)
+    
+    if not org_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Organization context required"
+        )
+    
+    # Convert content to bytes for storage
+    content_bytes = document_data.content.encode('utf-8')
+    
+    # Generate unique filename for the generated document
+    stored_filename = f"{uuid.uuid4()}.md"
+    
+    # Create org-specific directory
+    org_upload_dir = os.path.join(DOCUMENTS_UPLOAD_DIR, str(org_id))
+    os.makedirs(org_upload_dir, exist_ok=True)
+    
+    storage_path = os.path.join(org_upload_dir, stored_filename)
+    
+    # Calculate checksum
+    checksum = hashlib.sha256(content_bytes).hexdigest()
+    
+    # Save content to file
+    with open(storage_path, "wb") as f:
+        f.write(content_bytes)
+    
+    # Create document record
+    document = Document(
+        organization_id=org_id,
+        name=document_data.name,
+        category=document_data.category,
+        status=DocumentStatus.VALIDADO,  # Generated docs are auto-validated
+        original_filename=f"{document_data.name}.md",
+        stored_filename=stored_filename,
+        storage_path=storage_path,
+        mime_type="text/markdown",
+        size_bytes=len(content_bytes),
+        checksum=checksum,
+        tags=serialize_tags([document_data.template_name] if document_data.template_name else None),
+        owner_name=current_user.full_name or current_user.email,
+        uploaded_by_user_id=current_user.id
+    )
+    
+    db.add(document)
+    db.commit()
+    db.refresh(document)
+    
+    # Log audit
+    AuditLogger.log_create(
+        db=db,
+        entity_type="Document",
+        entity_id=document.id,
+        user_id=current_user.id,
+        organization_id=org_id,
+        changes={
+            "name": document.name,
+            "category": document.category,
+            "template": document_data.template_name,
+            "generated": True
+        }
+    )
+    
+    return DocumentResponse(
+        id=document.id,
+        name=document.name,
+        category=document.category,
+        status=DocumentStatusEnum(document.status.value),
+        size_bytes=document.size_bytes,
+        uploaded_at=document.created_at,
+        owner_name=document.owner_name,
+        tags=parse_tags(document.tags),
+        download_url=f"/api/documents/{document.id}/content",
+        expires_at=document.expires_at
+    )
 
 
 @router.get("", response_model=DocumentListResponse)

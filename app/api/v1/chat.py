@@ -244,18 +244,6 @@ async def send_chat_message(
         ChatFile.is_active == True
     ).all()
     
-    # Create timeline event for AI processing
-    timeline_event = ChatTimelineEvent(
-        thread_id=thread_id,
-        organization_id=user_assoc.organization_id,
-        type=TimelineEventType.AI_PROCESSING,
-        status=TimelineEventStatus.IN_PROGRESS,
-        title="Processando mensagem",
-        description="Enviando para o assistente virtual..."
-    )
-    db.add(timeline_event)
-    db.commit()
-    
     # Call N8N Webhook Synchronously
     # Call N8N Webhook Synchronously
     try:
