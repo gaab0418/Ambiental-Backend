@@ -257,6 +257,7 @@ async def send_chat_message(
     db.commit()
     
     # Call N8N Webhook Synchronously
+    # Call N8N Webhook Synchronously
     try:
         # Prepare simple payload as requested
         payload = {
@@ -273,15 +274,40 @@ async def send_chat_message(
                 webhook_url,
                 json=payload
             )
-            response.raise_for_status()
-            response_data = response.json()
             
-        # Extract output
-        assistant_text = response_data.get("output", "")
+        # Handle response
+        assistant_text = ""
         
+        if response.status_code == 200:
+            try:
+                response_data = response.json()
+                
+                # Handle if response is a list (common in n8n)
+                if isinstance(response_data, list):
+                    if response_data:
+                        # Extract first item if it's a list
+                        first_item = response_data[0]
+                        if isinstance(first_item, dict):
+                            assistant_text = first_item.get("output", "")
+                        else:
+                             # Or maybe the list itself is strings? Less likely for n8n webhook but possible
+                            logger.warning(f"N8N returned list but item is not dict: {first_item}")
+                    else:
+                        response_data = {}
+                elif isinstance(response_data, dict):
+                    assistant_text = response_data.get("output", "")
+                
+                if not assistant_text:
+                    logger.warning(f"N8N response missing 'output' field. Data: {response_data}")
+                    
+            except Exception as json_err:
+                logger.error(f"Failed to parse N8N response JSON: {str(json_err)}. Body: {response.text}")
+        else:
+            logger.error(f"N8N returned status {response.status_code}: {response.text}")
+        
+        # Fallback message if something went wrong
         if not assistant_text:
-            logger.warning(f"N8N response missing 'output' field: {response_data}")
-            assistant_text = "Desculpe, não consegui processar sua resposta."
+            assistant_text = "Desculpe, estou com dificuldades para processar sua solicitação no momento. Por favor, tente novamente."
 
         # Create assistant message
         assistant_message = ChatMessage(
