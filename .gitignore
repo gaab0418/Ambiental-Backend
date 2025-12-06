@@ -161,7 +161,7 @@ config.db
 .idea/
 
 # Upload directories
-uploads/
+uploads
 
 # PowerShell scripts
 *.ps1

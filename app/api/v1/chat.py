@@ -29,14 +29,25 @@ router = APIRouter()
 
 @router.get("/threads", response_model=List[ChatThreadResponse])
 async def get_chat_threads(
+    process_code: Optional[str] = Query(None),
+    type: Optional[str] = Query(None),
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
-    """Get all chat threads for the current user."""
-    threads = db.query(ChatThread).filter(
+    """Get all chat threads for the current user, optionally filtered."""
+    query = db.query(ChatThread).filter(
         ChatThread.user_id == current_user.id,
         ChatThread.is_active == True
-    ).order_by(ChatThread.updated_at.desc()).all()
+    )
+    
+    # Apply filters
+    if process_code:
+        query = query.filter(ChatThread.process_code == process_code)
+    
+    if type:
+        query = query.filter(ChatThread.type == type)
+        
+    threads = query.order_by(ChatThread.updated_at.desc()).all()
     
     # Enrich with aggregated data
     result = []
@@ -55,7 +66,12 @@ async def get_chat_threads(
             ).count(),
             "has_timeline": db.query(ChatTimelineEvent).filter(
                 ChatTimelineEvent.thread_id == thread.id
-            ).count() > 0
+            ).count() > 0,
+            # Context fields
+            "type": thread.type,
+            "process_code": thread.process_code,
+            "process_id": thread.process_id,
+            "law_id": thread.law_id
         }
         result.append(thread_dict)
     
@@ -93,7 +109,12 @@ async def create_chat_thread(
         user_id=current_user.id,
         organization_id=user_assoc.organization_id,
         title=thread_data.title or "New Chat",
-        is_active=True
+        is_active=True,
+        # Context
+        type=thread_data.type or "general",
+        process_code=thread_data.process_code,
+        process_id=thread_data.process_id,
+        law_id=thread_data.law_id
     )
     
     db.add(thread)

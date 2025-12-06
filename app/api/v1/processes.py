@@ -459,6 +459,8 @@ async def add_timeline_entry(
     )
 
 
+from app.models.chat_thread import ChatThread
+
 @router.delete("/{process_id}")
 async def delete_process(
     request: Request,
@@ -492,11 +494,19 @@ async def delete_process(
         changes={"title": process_title, "protocol": process.protocol}
     )
     
+    # Unlink linked chat threads (set process_id to None)
+    # ensuring deletion doesn't fail due to FK constraints
+    linked_threads = db.query(ChatThread).filter(ChatThread.process_id == process_id).all()
+    for thread in linked_threads:
+        thread.process_id = None
+        # We keep process_code for reference if needed
+    
     # Delete process (timeline entries will be cascade deleted)
     db.delete(process)
     db.commit()
     
     return {"message": f"Process '{process_title}' deleted successfully"}
+
 
 
 
