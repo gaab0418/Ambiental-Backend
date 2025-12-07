@@ -55,9 +55,15 @@ origins = [
     "http://127.0.0.1:3001",
 ]
 
+# Add origins from settings
+if settings.allowed_origins:
+    origins.extend(settings.allowed_origins)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
+    # TODO: SECURITY - Allow ngrok domains only in development. Remove this in production if not needed.
+    allow_origin_regex="https://.*\\.ngrok-free\\.(app|dev)" if settings.environment != "production" else None,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
