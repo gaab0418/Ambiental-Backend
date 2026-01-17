@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     database_url_test: str | None = None
     
     # Security
-    secret_key: str = "your-super-secret-key-here-change-in-production"
+    secret_key: str = "your-secret-key-change-in-production"
     algorithm: str = "HS256"
     access_token_expire_minutes: int = 15
     refresh_token_expire_days: int = 7
@@ -27,13 +27,13 @@ class Settings(BaseSettings):
     # Initial admin bootstrap
     initial_admin_email: str = "admin@ambiental.local"
     initial_admin_full_name: str = "Administrador Ambiental"
-    initial_admin_password: str = "ChangeMe#123"
+    initial_admin_password: str = "admin123"
     
     # CORS - stored as string, converted to list
-    allowed_origins_str: str = "http://localhost:3000,http://localhost:8080,http://localhost:4200"
+    allowed_origins_str: str = "http://localhost:3000,http://localhost:8080,http://localhost:4200,http://localhost:5678"
     
     # N8N Integration
-    n8n_webhook_url: str = "https://profound-drum-faithful.ngrok-free.app/webhook/"
+    n8n_webhook_url: str = "http://localhost:5678/webhook/"
     n8n_jwt_token: str = ""
     n8n_signing_secret: str = ""  # For HMAC validation of callbacks from N8N
     
