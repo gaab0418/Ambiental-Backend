@@ -6,10 +6,12 @@ from datetime import datetime
 
 from app.database import get_db
 from app.models.checklist_item import ProcessChecklistItem
-from app.models.process import Process
+from app.models.process import Process, ProcessStatus
 from app.models.organization import Organization
-from app.dependencies.auth import get_current_user
+from app.dependencies.auth import get_current_user, get_current_user_optional, get_organization_from_token
 from app.dependencies.api_key_auth import verify_api_key
+from app.models.user import User
+from fastapi import APIRouter, Depends, HTTPException, Query, Header, Request
 
 router = APIRouter()
 
@@ -95,13 +97,15 @@ async def get_checklist(
 async def add_checklist_item(
     process_id: int,
     item: ChecklistItemCreate,
+    request: Request,
     db: Session = Depends(get_db),
-    x_api_key: Optional[str] = Header(None)
+    x_api_key: Optional[str] = Header(None),
+    current_user: Optional[User] = Depends(get_current_user_optional)
 ):
     """Create checklist item (supports JWT or API Key auth)."""
     organization_id = None
     
-    # API Key auth check
+    # Check Auth Method
     if x_api_key:
         from app.dependencies.api_key_auth import hash_api_key
         from app.models.api_key import ApiKey
@@ -111,8 +115,14 @@ async def add_checklist_item(
         if not api_key_obj:
             raise HTTPException(status_code=401, detail="Invalid API Key")
         organization_id = api_key_obj.organization_id
+    elif current_user:
+        # JWT Auth
+        org_id = get_organization_from_token(request)
+        if not org_id:
+             raise HTTPException(status_code=400, detail="Organization context required")
+        organization_id = org_id
     else:
-        raise HTTPException(status_code=401, detail="Authentication required: provide X-API-Key header")
+        raise HTTPException(status_code=401, detail="Authentication required: provide Bearer token or X-API-Key header")
     
     process = db.query(Process).filter(Process.id == process_id).first()
     if not process:
@@ -148,6 +158,24 @@ async def add_checklist_item(
     db.add(new_item)
     db.commit()
     db.refresh(new_item)
+    
+    # Recalculate progress
+    total_items = db.query(ProcessChecklistItem).filter(ProcessChecklistItem.process_id == process_id).count()
+    if total_items > 0:
+        completed_items = db.query(ProcessChecklistItem).filter(
+            ProcessChecklistItem.process_id == process_id,
+            ProcessChecklistItem.is_completed == True
+        ).count()
+        process.progress = int((completed_items / total_items) * 100)
+        
+        # Auto-update status based on progress
+        if process.progress == 100:
+            process.status = ProcessStatus.AGUARDANDO_ANALISE
+        elif process.progress < 100 and process.status == ProcessStatus.AGUARDANDO_ANALISE:
+            process.status = ProcessStatus.EM_ANDAMENTO
+            
+        db.commit()
+        
     return new_item
 
 @router.patch("/checklist/{item_id}", response_model=ChecklistItemResponse)
@@ -178,6 +206,13 @@ def update_checklist_item(
             ProcessChecklistItem.is_completed == True
         ).count()
         process.progress = int((completed_items / total_items) * 100)
+        
+        # Auto-update status based on progress
+        if process.progress == 100:
+            process.status = ProcessStatus.AGUARDANDO_ANALISE
+        elif process.progress < 100 and process.status == ProcessStatus.AGUARDANDO_ANALISE:
+            process.status = ProcessStatus.EM_ANDAMENTO
+            
         db.commit()
         
     return item
@@ -206,6 +241,13 @@ def delete_checklist_item(
                 ProcessChecklistItem.is_completed == True
             ).count()
             process.progress = int((completed_items / total_items) * 100)
+            
+            # Auto-update status based on progress
+            if process.progress == 100:
+                process.status = ProcessStatus.AGUARDANDO_ANALISE
+            elif process.progress < 100 and process.status == ProcessStatus.AGUARDANDO_ANALISE:
+                process.status = ProcessStatus.EM_ANDAMENTO
+                
         else:
             process.progress = 0
         db.commit()
