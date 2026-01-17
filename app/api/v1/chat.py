@@ -11,7 +11,6 @@ from app.models.user import User
 from app.models.chat_thread import ChatThread
 from app.models.chat_message import ChatMessage, MessageRole
 from app.models.chat_file import ChatFile
-from app.models.chat_timeline_event import ChatTimelineEvent, TimelineEventType, TimelineEventStatus
 from app.schemas.chat import (
     ChatThreadCreate, ChatThreadUpdate, ChatThreadResponse,
     ChatMessageCreate, ChatMessageResponse, ChatMessagesResponse,
@@ -64,14 +63,11 @@ async def get_chat_threads(
                 ChatFile.thread_id == thread.id,
                 ChatFile.is_active == True
             ).count(),
-            "has_timeline": db.query(ChatTimelineEvent).filter(
-                ChatTimelineEvent.thread_id == thread.id
-            ).count() > 0,
-            # Context fields
-            "type": thread.type,
             "process_code": thread.process_code,
             "process_id": thread.process_id,
-            "law_id": thread.law_id
+            "law_id": thread.law_id,
+            "type": thread.type,
+            "has_timeline": False  # Deprecated
         }
         result.append(thread_dict)
     
@@ -435,9 +431,7 @@ async def update_chat_thread(
             ChatFile.thread_id == thread.id,
             ChatFile.is_active == True
         ).count(),
-        "has_timeline": db.query(ChatTimelineEvent).filter(
-            ChatTimelineEvent.thread_id == thread.id
-        ).count() > 0,
+        "has_timeline": False,  # Deprecated
         "type": thread.type,
         "process_code": thread.process_code,
         "process_id": thread.process_id,
@@ -500,32 +494,7 @@ async def n8n_message_callback(
         changes={"role": "ASSISTANT", "thread_id": thread_id, "source": "n8n_callback"}
     )
     
-    # Update or complete AI processing timeline event if it exists
-    processing_event = db.query(ChatTimelineEvent).filter(
-        ChatTimelineEvent.thread_id == thread_id,
-        ChatTimelineEvent.type == TimelineEventType.AI_PROCESSING,
-        ChatTimelineEvent.status == TimelineEventStatus.IN_PROGRESS
-    ).order_by(ChatTimelineEvent.created_at.desc()).first()
-    
-    if processing_event:
-        processing_event.status = TimelineEventStatus.COMPLETED
-        processing_event.title = "Resposta da IA recebida"
-        processing_event.description = "Processamento concluído com sucesso"
-    
-    # Create timeline events if provided
-    if callback_data.timeline_events:
-        for event_data in callback_data.timeline_events:
-            timeline_event = ChatTimelineEvent(
-                thread_id=thread_id,
-                organization_id=thread.organization_id,
-                type=TimelineEventType[event_data.type.upper()],
-                status=TimelineEventStatus[event_data.status.upper()],
-                title=event_data.title,
-                description=event_data.description,
-                order_index=event_data.order_index,
-                event_metadata=event_data.metadata
-            )
-            db.add(timeline_event)
+    # Timeline events processing removed (deprecated)
     
     # Update thread timestamp
     thread.updated_at = datetime.now(timezone.utc)

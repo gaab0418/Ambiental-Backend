@@ -87,23 +87,7 @@ class ProcessListResponse(BaseModel):
     offset: int
 
 
-class ProcessTimelineEntryBase(BaseModel):
-    title: str = Field(..., max_length=255)
-    description: Optional[str] = None
-    status: ProcessStatusEnum
 
-
-class ProcessTimelineEntryCreate(ProcessTimelineEntryBase):
-    pass
-
-
-class ProcessTimelineEntryResponse(ProcessTimelineEntryBase):
-    id: int
-    process_id: int
-    created_at: datetime
-
-    class Config:
-        from_attributes = True
 
 
 

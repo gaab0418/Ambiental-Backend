@@ -28,6 +28,5 @@ class ChatThread(Base):
     legislation = relationship("Legislation", backref="chat_threads")
     messages = relationship("ChatMessage", back_populates="thread", cascade="all, delete-orphan")
     files = relationship("ChatFile", back_populates="thread", cascade="all, delete-orphan")
-    timeline_events = relationship("ChatTimelineEvent", back_populates="thread", cascade="all, delete-orphan")
 
 

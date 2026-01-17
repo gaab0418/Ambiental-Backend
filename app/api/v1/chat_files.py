@@ -10,7 +10,6 @@ from app.database import get_db
 from app.models.user import User
 from app.models.chat_thread import ChatThread
 from app.models.chat_file import ChatFile
-from app.models.chat_timeline_event import ChatTimelineEvent, TimelineEventType, TimelineEventStatus
 from app.schemas.chat import ChatFileResponse
 from app.dependencies.auth import get_current_active_user
 from app.models.user_organization_association import UserOrganizationAssociation
@@ -156,19 +155,6 @@ async def upload_chat_files(
             }
         )
     
-    # Create timeline event for file upload
-    timeline_event = ChatTimelineEvent(
-        thread_id=thread_id,
-        organization_id=user_assoc.organization_id,
-        type=TimelineEventType.FILE,
-        status=TimelineEventStatus.COMPLETED,
-        title=f"{len(files)} arquivo(s) anexado(s)",
-        description=f"Arquivos: {', '.join([f.filename for f in files])}",
-        order_index=0,
-        event_metadata={"file_count": len(files)}
-    )
-    
-    db.add(timeline_event)
     
     # Update thread timestamp
     thread.updated_at = datetime.now(timezone.utc)

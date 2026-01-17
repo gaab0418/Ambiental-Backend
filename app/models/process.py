@@ -44,6 +44,8 @@ class Process(Base):
     tags = Column(Text, nullable=True)  # JSON array as string
     summary = Column(Text, nullable=True)
     
+    in_type = Column(String(50), nullable=True)  # Hardcoded IN type key
+    
     deadline = Column(DateTime(timezone=True), nullable=True)
     
     created_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
@@ -54,23 +56,8 @@ class Process(Base):
     # Relationships
     organization = relationship("Organization", back_populates="processes")
     created_by = relationship("User", backref="created_processes")
-    timeline_entries = relationship("ProcessTimelineEntry", back_populates="process", cascade="all, delete-orphan")
-
-
-class ProcessTimelineEntry(Base):
-    __tablename__ = "process_timeline_entries"
-
-    id = Column(Integer, primary_key=True, index=True)
-    process_id = Column(Integer, ForeignKey("processes.id"), nullable=False)
-    
-    title = Column(String(255), nullable=False)
-    description = Column(Text, nullable=True)
-    status = Column(SQLEnum(ProcessStatus), nullable=False)
-    
-    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
-
-    # Relationships
-    process = relationship("Process", back_populates="timeline_entries")
+    checklist_items = relationship("ProcessChecklistItem", back_populates="process", cascade="all, delete-orphan")
+    documents = relationship("Document", backref="process", cascade="all, delete-orphan")
 
 
 
