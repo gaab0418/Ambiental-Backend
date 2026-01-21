@@ -44,6 +44,10 @@ class Settings(BaseSettings):
     # Encryption
     file_encryption_key: str = ""  # Base64-encoded 256-bit key for file encryption
     
+    # Logging
+    log_requests_to_db: bool = False
+    log_requests_to_file: bool = True
+    
     @computed_field
     @property
     def allowed_origins(self) -> List[str]:

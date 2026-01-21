@@ -5,6 +5,7 @@ from app.models.plan import Plan
 from app.models.subscription import Subscription
 from app.models.license import License
 from app.models.audit_log import AuditLog
+from app.models.request_log import RequestLog
 from app.models.system_metric import SystemMetric
 from app.models.document_template import DocumentTemplate
 from app.models.chat_thread import ChatThread
@@ -31,6 +32,7 @@ __all__ = [
     "Subscription",
     "License",
     "AuditLog",
+    "RequestLog",
     "SystemMetric",
     "DocumentTemplate",
     "ChatThread",

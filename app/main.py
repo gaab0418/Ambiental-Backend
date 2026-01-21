@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from app.config import settings
 from app.api.v1 import auth, organization, billing, master, logs, metrics, templates, upload, consultant, chat, chat_files, checklist, activation, agenda, documents, legislations, processes, api_keys
 from app.middleware.audit import AuditMiddleware
+from app.middleware.request_logging import RequestLoggingMiddleware
 from app.database import engine
 from app.models import Base
 from app.utils.n8n_client import n8n_client
@@ -66,6 +67,11 @@ app.add_middleware(
 app.add_middleware(
     AuditMiddleware,
     exclude_paths=["/docs", "/redoc", "/openapi.json", "/health", "/metrics"]
+)
+
+# Request Logging middleware (logs full request/response)
+app.add_middleware(
+    RequestLoggingMiddleware
 )
 
 # Create uploads directory if it doesn't exist

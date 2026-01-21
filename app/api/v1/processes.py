@@ -25,6 +25,7 @@ from app.dependencies.auth import get_current_active_user, get_organization_from
 from app.utils.audit_logger import AuditLogger
 from app.utils.report_generator import generate_technical_report
 from app.utils.default_checklist import get_default_checklist_items
+from app.utils.n8n_client import trigger_process_webhook
 
 router = APIRouter()
 
@@ -48,6 +49,10 @@ def serialize_tags(tags: Optional[List[str]]) -> Optional[str]:
 
 def process_to_response(proc: Process) -> ProcessResponse:
     """Convert Process model to response schema."""
+    # Calculate checklist stats
+    total_items = len(proc.checklist_items)
+    completed_items = sum(1 for item in proc.checklist_items if item.is_completed)
+    
     return ProcessResponse(
         id=proc.id,
         title=proc.title,
@@ -58,10 +63,14 @@ def process_to_response(proc: Process) -> ProcessResponse:
         responsible=proc.responsible,
         location=proc.location,
         tags=parse_tags(proc.tags),
+        in_type=proc.in_type,
         summary=proc.summary,
         deadline=proc.deadline,
         created_at=proc.created_at,
-        updated_at=proc.updated_at
+        updated_at=proc.updated_at,
+        checklist_total=total_items,
+        checklist_completed=completed_items,
+        checklist_pending=total_items - completed_items
     )
 
 
@@ -258,6 +267,22 @@ async def create_process(
     
     db.commit()
     
+    # Trigger N8N Webhook (Async, don't block response if it fails, or log error)
+    # We pass the auth token from the request headers
+    auth_token = request.headers.get("Authorization")
+    
+    # Run webhook trigger
+    try:
+        await trigger_process_webhook(
+            process_id=process.id,
+            file_name=in_type or file.filename, # Use in_type as filename if available, else original filename
+            file_path=storage_path,
+            auth_token=auth_token
+        )
+    except Exception as e:
+        print(f"Failed to trigger N8N webhook: {e}")
+        # We continue even if webhook fails, as process is created
+
     return process_to_response(process)
 
 

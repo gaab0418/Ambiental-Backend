@@ -71,10 +71,14 @@ class ProcessResponse(BaseModel):
     responsible: Optional[str] = None
     location: Optional[str] = None
     tags: Optional[List[str]] = None
+    in_type: Optional[str] = None
     summary: Optional[str] = None
     deadline: Optional[datetime] = None
     created_at: datetime
     updated_at: Optional[datetime] = None
+    checklist_total: int = 0
+    checklist_completed: int = 0
+    checklist_pending: int = 0
 
     class Config:
         from_attributes = True
