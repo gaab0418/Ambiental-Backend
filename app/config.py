@@ -31,6 +31,7 @@ class Settings(BaseSettings):
     
     # CORS - stored as string, converted to list
     allowed_origins_str: str = "http://localhost:3000,http://localhost:8080,http://localhost:4200,http://localhost:5678"
+    allow_ngrok_wildcard: bool = False
     
     # N8N Integration
     n8n_webhook_url: str = "http://localhost:5678/webhook/"

@@ -16,3 +16,5 @@ Pillow
 pytest
 pytest-asyncio
 pydantic[email]
+reportlab
+jinja2

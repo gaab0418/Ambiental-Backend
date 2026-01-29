@@ -56,8 +56,8 @@ if settings.allowed_origins:
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
-    # TODO: SECURITY - Allow ngrok domains only in development. Remove this in production if not needed.
-    allow_origin_regex="https://.*\\.ngrok-free\\.(app|dev)" if settings.environment != "production" else None,
+    # TODO: SECURITY - Allow ngrok domains only in development or if explicitly allowed.
+    allow_origin_regex="https://.*\\.ngrok-free\\.(app|dev)" if (settings.environment != "production" or settings.allow_ngrok_wildcard) else None,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
