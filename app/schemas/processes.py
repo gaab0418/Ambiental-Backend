@@ -71,10 +71,14 @@ class ProcessResponse(BaseModel):
     responsible: Optional[str] = None
     location: Optional[str] = None
     tags: Optional[List[str]] = None
+    in_type: Optional[str] = None
     summary: Optional[str] = None
     deadline: Optional[datetime] = None
     created_at: datetime
     updated_at: Optional[datetime] = None
+    checklist_total: int = 0
+    checklist_completed: int = 0
+    checklist_pending: int = 0
 
     class Config:
         from_attributes = True
@@ -87,23 +91,8 @@ class ProcessListResponse(BaseModel):
     offset: int
 
 
-class ProcessTimelineEntryBase(BaseModel):
-    title: str = Field(..., max_length=255)
-    description: Optional[str] = None
-    status: ProcessStatusEnum
 
 
-class ProcessTimelineEntryCreate(ProcessTimelineEntryBase):
-    pass
-
-
-class ProcessTimelineEntryResponse(ProcessTimelineEntryBase):
-    id: int
-    process_id: int
-    created_at: datetime
-
-    class Config:
-        from_attributes = True
 
 
 

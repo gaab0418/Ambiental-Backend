@@ -11,12 +11,13 @@ from app.api.v1 import (
     consultant,
     chat,
     chat_files,
-    chat_timeline,
+    checklist,
     activation,
     agenda,
     documents,
     legislations,
     processes,
+    api_keys,
 )
 
 __all__ = [
@@ -31,13 +32,15 @@ __all__ = [
     "consultant",
     "chat",
     "chat_files",
-    "chat_timeline",
+    "checklist",
     "activation",
     "agenda",
     "documents",
     "legislations",
     "processes",
+    "api_keys",
 ]
+
 
 
 

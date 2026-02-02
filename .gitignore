@@ -161,7 +161,7 @@ config.db
 .idea/
 
 # Upload directories
-uploads/
+uploads
 
 # PowerShell scripts
 *.ps1
@@ -169,3 +169,4 @@ uploads/
 # Setup and configuration files
 setup.py
 configure_env.py
+.agent/

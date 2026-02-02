@@ -21,6 +21,7 @@ class Document(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=False)
+    process_id = Column(Integer, ForeignKey("processes.id"), nullable=True)
     
     name = Column(String(255), nullable=False)
     category = Column(String(100), nullable=False, default="GERAL")
@@ -52,6 +53,7 @@ class Document(Base):
     # Relationships
     organization = relationship("Organization", back_populates="documents")
     uploaded_by = relationship("User", backref="uploaded_documents")
+
 
 
 

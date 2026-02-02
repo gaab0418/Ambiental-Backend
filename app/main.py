@@ -3,8 +3,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from contextlib import asynccontextmanager
 from app.config import settings
-from app.api.v1 import auth, organization, billing, master, logs, metrics, templates, upload, consultant, chat, chat_files, chat_timeline, activation, agenda, documents, legislations, processes
+from app.api.v1 import auth, organization, billing, master, logs, metrics, templates, upload, consultant, chat, chat_files, checklist, activation, agenda, documents, legislations, processes, api_keys
 from app.middleware.audit import AuditMiddleware
+from app.middleware.request_logging import RequestLoggingMiddleware
 from app.database import engine
 from app.models import Base
 from app.utils.n8n_client import n8n_client
@@ -46,9 +47,17 @@ app = FastAPI(
 )
 
 # CORS middleware
+origins = []
+
+# Add origins from settings
+if settings.allowed_origins:
+    origins.extend(settings.allowed_origins)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allow all origins for development
+    allow_origins=origins,
+    # TODO: SECURITY - Allow ngrok domains only in development or if explicitly allowed.
+    allow_origin_regex="https://.*\\.ngrok-free\\.(app|dev)" if (settings.environment != "production" or settings.allow_ngrok_wildcard) else None,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -58,6 +67,11 @@ app.add_middleware(
 app.add_middleware(
     AuditMiddleware,
     exclude_paths=["/docs", "/redoc", "/openapi.json", "/health", "/metrics"]
+)
+
+# Request Logging middleware (logs full request/response)
+app.add_middleware(
+    RequestLoggingMiddleware
 )
 
 # Create uploads directory if it doesn't exist
@@ -81,7 +95,7 @@ app.include_router(upload.router, prefix="/api/upload", tags=["Upload"])
 app.include_router(consultant.router, prefix="/api/consultant", tags=["Consultant"])
 app.include_router(chat.router, prefix="/api/chat", tags=["Chat"])
 app.include_router(chat_files.router, prefix="/api/chat", tags=["Chat Files"])
-app.include_router(chat_timeline.router, prefix="/api/chat", tags=["Chat Timeline"])
+app.include_router(checklist.router, prefix="/api/checklist", tags=["Checklist"])
 app.include_router(activation.router, prefix="/api/v1", tags=["Activation"])
 
 # New module routers
@@ -89,6 +103,7 @@ app.include_router(agenda.router, prefix="/api/agenda", tags=["Agenda"])
 app.include_router(documents.router, prefix="/api/documents", tags=["Documents"])
 app.include_router(legislations.router, prefix="/api/legislations", tags=["Legislations"])
 app.include_router(processes.router, prefix="/api/processes", tags=["Processes"])
+app.include_router(api_keys.router, prefix="/api/api-keys", tags=["API Keys"])
 
 
 @app.get("/")

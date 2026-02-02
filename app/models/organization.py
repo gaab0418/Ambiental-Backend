@@ -41,3 +41,4 @@ class Organization(Base):
     agenda_events = relationship("AgendaEvent", back_populates="organization", cascade="all, delete-orphan")
     documents = relationship("Document", back_populates="organization", cascade="all, delete-orphan")
     processes = relationship("Process", back_populates="organization", cascade="all, delete-orphan")
+    api_keys = relationship("ApiKey", back_populates="organization", cascade="all, delete-orphan")

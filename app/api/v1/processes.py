@@ -1,23 +1,31 @@
+
 """
 Processes API - Environmental processes and workflows
 """
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile, File, Form, status
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from typing import Optional, List
 from datetime import datetime, timezone
 import json
+import os
+import uuid
 
 from app.database import get_db
 from app.models.user import User
-from app.models.process import Process, ProcessStatus, ProcessPriority, ProcessTimelineEntry
+from app.models.process import Process, ProcessStatus, ProcessPriority
+from app.models.checklist_item import ProcessChecklistItem
+from app.models.organization import Organization
 from app.schemas.processes import (
     ProcessCreate, ProcessUpdate, ProcessResponse,
     ProcessListResponse, ProcessStatusUpdate, ProcessProgressUpdate,
-    ProcessTimelineEntryCreate, ProcessTimelineEntryResponse,
     ProcessStatusEnum, ProcessPriorityEnum
 )
 from app.dependencies.auth import get_current_active_user, get_organization_from_token
 from app.utils.audit_logger import AuditLogger
+from app.utils.report_generator import generate_technical_report
+from app.utils.default_checklist import get_default_checklist_items
+from app.utils.n8n_client import trigger_process_webhook
 
 router = APIRouter()
 
@@ -41,6 +49,10 @@ def serialize_tags(tags: Optional[List[str]]) -> Optional[str]:
 
 def process_to_response(proc: Process) -> ProcessResponse:
     """Convert Process model to response schema."""
+    # Calculate checklist stats
+    total_items = len(proc.checklist_items)
+    completed_items = sum(1 for item in proc.checklist_items if item.is_completed)
+    
     return ProcessResponse(
         id=proc.id,
         title=proc.title,
@@ -51,10 +63,14 @@ def process_to_response(proc: Process) -> ProcessResponse:
         responsible=proc.responsible,
         location=proc.location,
         tags=parse_tags(proc.tags),
+        in_type=proc.in_type,
         summary=proc.summary,
         deadline=proc.deadline,
         created_at=proc.created_at,
-        updated_at=proc.updated_at
+        updated_at=proc.updated_at,
+        checklist_total=total_items,
+        checklist_completed=completed_items,
+        checklist_pending=total_items - completed_items
     )
 
 
@@ -136,11 +152,21 @@ async def list_processes(
 @router.post("", response_model=ProcessResponse, status_code=status.HTTP_201_CREATED)
 async def create_process(
     request: Request,
-    process_data: ProcessCreate,
+    title: str = Form(...),
+    protocol: str = Form(...),
+    status_val: str = Form("EM_ANDAMENTO", alias="status"),
+    priority_val: str = Form("MEDIA", alias="priority"),
+    deadline: Optional[str] = Form(None),
+    summary: Optional[str] = Form(None),
+    responsible: Optional[str] = Form(None),
+    location: Optional[str] = Form(None),
+    in_type: Optional[str] = Form(None),
+    tags: Optional[str] = Form(None),
+    file: UploadFile = File(...),  # Mandatory file
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
-    """Create a new process."""
+    """Create a new process with mandatory PDF document."""
     org_id = get_organization_from_token(request)
     
     if not org_id:
@@ -150,42 +176,81 @@ async def create_process(
         )
     
     # Check if protocol already exists
-    existing = db.query(Process).filter(Process.protocol == process_data.protocol).first()
+    existing = db.query(Process).filter(Process.protocol == protocol).first()
     if existing:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Protocol already exists"
         )
     
-    # Create process
+    # 1. Create Process
     process = Process(
         organization_id=org_id,
-        title=process_data.title,
-        protocol=process_data.protocol,
-        status=ProcessStatus(process_data.status.value),
-        priority=ProcessPriority(process_data.priority.value),
-        progress=process_data.progress,
-        responsible=process_data.responsible,
-        location=process_data.location,
-        tags=serialize_tags(process_data.tags),
-        summary=process_data.summary,
-        deadline=process_data.deadline,
+        title=title,
+        protocol=protocol,
+        status=ProcessStatus(status_val),
+        priority=ProcessPriority(priority_val),
+        progress=0,
+        responsible=responsible,
+        location=location,
+        tags=tags, # Expecting raw JSON string or nothing if coming from form
+        summary=summary,
+        in_type=in_type,
+        deadline=datetime.fromisoformat(deadline.replace('Z', '+00:00')) if deadline else None,
         created_by_user_id=current_user.id
     )
     
     db.add(process)
     db.commit()
     db.refresh(process)
+
+    # 2. Save Document (Reusing logic from documents.py slightly)
+    # Validate file type (basic)
+    if not file.content_type == "application/pdf":
+        # Cleanup process if file is invalid? Or just error?
+        # Ideally we rollback, but let's stick to simple flow.
+        db.delete(process) 
+        db.commit()
+        raise HTTPException(status_code=400, detail="Only PDF files are allowed")
+
+    content = await file.read()
     
-    # Create initial timeline entry
-    timeline_entry = ProcessTimelineEntry(
-        process_id=process.id,
-        title="Processo criado",
-        description=f"Processo '{process.title}' criado por {current_user.full_name}",
-        status=process.status
+    # Storage logic
+    from app.api.v1.documents import DOCUMENTS_UPLOAD_DIR
+    import os, uuid, hashlib
+    from app.models.document import Document, DocumentStatus
+    
+    file_ext = os.path.splitext(file.filename)[1] if file.filename else ".pdf"
+    stored_filename = f"{uuid.uuid4()}{file_ext}"
+    org_upload_dir = os.path.join(DOCUMENTS_UPLOAD_DIR, str(org_id))
+    os.makedirs(org_upload_dir, exist_ok=True)
+    storage_path = os.path.join(org_upload_dir, stored_filename)
+    
+    with open(storage_path, "wb") as f:
+        f.write(content)
+        
+    checksum = hashlib.sha256(content).hexdigest()
+    
+    document = Document(
+        organization_id=org_id,
+        process_id=process.id, # Link to process
+        name=f"Anexo Processo - {file.filename}",
+        category="PROCESSO_ANEXO",
+        status=DocumentStatus.VALIDADO,
+        original_filename=file.filename or "process_attachment.pdf",
+        stored_filename=stored_filename,
+        storage_path=storage_path,
+        mime_type=file.content_type or "application/pdf",
+        size_bytes=len(content),
+        checksum=checksum,
+        owner_name=current_user.full_name or "Sistema",
+        uploaded_by_user_id=current_user.id
     )
-    db.add(timeline_entry)
+    
+    db.add(document)
     db.commit()
+    
+    # Timeline entry creation removed (deprecated)
     
     # Log audit
     AuditLogger.log_create(
@@ -194,9 +259,30 @@ async def create_process(
         entity_id=process.id,
         user_id=current_user.id,
         organization_id=org_id,
-        changes={"title": process.title, "protocol": process.protocol}
+        changes={"title": process.title, "protocol": process.protocol, "document": "attached"}
     )
     
+    # Note: Checklist items are NOT created automatically. 
+    # Users can add checklist items manually via the UI.
+    
+    db.commit()
+    
+    # Trigger N8N Webhook (Async, don't block response if it fails, or log error)
+    # We pass the auth token from the request headers
+    auth_token = request.headers.get("Authorization")
+    
+    # Run webhook trigger
+    try:
+        await trigger_process_webhook(
+            process_id=process.id,
+            file_name=in_type or file.filename, # Use in_type as filename if available, else original filename
+            file_path=storage_path,
+            auth_token=auth_token
+        )
+    except Exception as e:
+        print(f"Failed to trigger N8N webhook: {e}")
+        # We continue even if webhook fails, as process is created
+
     return process_to_response(process)
 
 
@@ -311,15 +397,6 @@ async def update_process_status(
     process.status = new_status
     process.updated_at = datetime.now(timezone.utc)
     
-    # Create timeline entry for status change
-    timeline_entry = ProcessTimelineEntry(
-        process_id=process.id,
-        title=f"Status alterado para {new_status.value}",
-        description=f"Status alterado de {old_status} para {new_status.value} por {current_user.full_name}",
-        status=new_status
-    )
-    db.add(timeline_entry)
-    
     db.commit()
     db.refresh(process)
     
@@ -378,86 +455,10 @@ async def update_process_progress(
     return process_to_response(process)
 
 
-@router.get("/{process_id}/timeline", response_model=List[ProcessTimelineEntryResponse])
-async def get_process_timeline(
-    request: Request,
-    process_id: int,
-    current_user: User = Depends(get_current_active_user),
-    db: Session = Depends(get_db)
-):
-    """Get timeline entries for a process."""
-    org_id = get_organization_from_token(request)
-    
-    process = db.query(Process).filter(
-        Process.id == process_id,
-        Process.organization_id == org_id
-    ).first()
-    
-    if not process:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Process not found"
-        )
-    
-    entries = db.query(ProcessTimelineEntry).filter(
-        ProcessTimelineEntry.process_id == process_id
-    ).order_by(ProcessTimelineEntry.created_at.desc()).all()
-    
-    return [
-        ProcessTimelineEntryResponse(
-            id=entry.id,
-            process_id=entry.process_id,
-            title=entry.title,
-            description=entry.description,
-            status=ProcessStatusEnum(entry.status.value),
-            created_at=entry.created_at
-        )
-        for entry in entries
-    ]
 
 
-@router.post("/{process_id}/timeline", response_model=ProcessTimelineEntryResponse, status_code=status.HTTP_201_CREATED)
-async def add_timeline_entry(
-    request: Request,
-    process_id: int,
-    entry_data: ProcessTimelineEntryCreate,
-    current_user: User = Depends(get_current_active_user),
-    db: Session = Depends(get_db)
-):
-    """Add a timeline entry to a process."""
-    org_id = get_organization_from_token(request)
-    
-    process = db.query(Process).filter(
-        Process.id == process_id,
-        Process.organization_id == org_id
-    ).first()
-    
-    if not process:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Process not found"
-        )
-    
-    entry = ProcessTimelineEntry(
-        process_id=process_id,
-        title=entry_data.title,
-        description=entry_data.description,
-        status=ProcessStatus(entry_data.status.value)
-    )
-    
-    db.add(entry)
-    db.commit()
-    db.refresh(entry)
-    
-    return ProcessTimelineEntryResponse(
-        id=entry.id,
-        process_id=entry.process_id,
-        title=entry.title,
-        description=entry.description,
-        status=ProcessStatusEnum(entry.status.value),
-        created_at=entry.created_at
-    )
 
+from app.models.chat_thread import ChatThread
 
 @router.delete("/{process_id}")
 async def delete_process(
@@ -492,6 +493,13 @@ async def delete_process(
         changes={"title": process_title, "protocol": process.protocol}
     )
     
+    # Unlink linked chat threads (set process_id to None)
+    # ensuring deletion doesn't fail due to FK constraints
+    linked_threads = db.query(ChatThread).filter(ChatThread.process_id == process_id).all()
+    for thread in linked_threads:
+        thread.process_id = None
+        # We keep process_code for reference if needed
+    
     # Delete process (timeline entries will be cascade deleted)
     db.delete(process)
     db.commit()
@@ -500,3 +508,183 @@ async def delete_process(
 
 
 
+
+@router.get("/{process_id}/document")
+async def get_process_document(
+    request: Request,
+    process_id: int,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """Get the document linked to a process."""
+    org_id = get_organization_from_token(request)
+    
+    # Get process
+    process = db.query(Process).filter(
+        Process.id == process_id,
+        Process.organization_id == org_id
+    ).first()
+    
+    if not process:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Process not found"
+        )
+    
+    # Get document linked to this process
+    from app.models.document import Document
+    document = db.query(Document).filter(
+        Document.process_id == process_id,
+        Document.organization_id == org_id
+    ).first()
+    
+    if not document:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No document found for this process"
+        )
+    
+    return {
+        "id": document.id,
+        "name": document.name,
+        "original_filename": document.original_filename,
+        "mime_type": document.mime_type,
+        "size_bytes": document.size_bytes,
+        "download_url": f"/api/documents/{document.id}/content"
+    }
+
+
+@router.post("/{process_id}/generate-report")
+async def generate_process_report(
+    request: Request,
+    process_id: int,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """Generate technical report PDF for a process."""
+    org_id = get_organization_from_token(request)
+    
+    # Get process
+    process = db.query(Process).filter(
+        Process.id == process_id,
+        Process.organization_id == org_id
+    ).first()
+    
+    if not process:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Process not found"
+        )
+    
+    # Get checklist items
+    checklist_items = db.query(ProcessChecklistItem).filter(
+        ProcessChecklistItem.process_id == process_id
+    ).all()
+    
+    # Get organization
+    organization = db.query(Organization).filter(Organization.id == org_id).first()
+    
+    # Calculate checklist stats
+    total_items = len(checklist_items)
+    completed_items = sum(1 for item in checklist_items if item.is_completed)
+    pending_items = total_items - completed_items
+    completion_rate = int((completed_items / total_items * 100)) if total_items > 0 else 0
+    
+    # Format status and priority for display
+    status_map = {
+        "EM_ANDAMENTO": "Em Andamento",
+        "AGUARDANDO_ANALISE": "Aguardando Análise",
+        "APROVADO": "Aprovado",
+        "PENDENTE": "Pendente",
+        "ATRASADO": "Atrasado",
+        "CANCELADO": "Cancelado",
+    }
+    
+    priority_map = {
+        "BAIXA": "Baixa",
+        "MEDIA": "Média",
+        "ALTA": "Alta",
+        "CRITICA": "Crítica",
+    }
+    
+    # Prepare data dictionaries
+    process_data = {
+        'title': process.title,
+        'protocol': process.protocol,
+        'status': status_map.get(process.status.value, process.status.value),
+        'priority': priority_map.get(process.priority.value, process.priority.value),
+        'responsible': process.responsible or 'Não informado',
+        'location': process.location or 'Não informado',
+        'progress': process.progress or 0,
+        'deadline': process.deadline.strftime('%d/%m/%Y') if process.deadline else 'Não informado',
+        'summary': process.summary or 'Sem resumo disponível',
+    }
+    
+    checklist_data = {
+        'items': [{
+            'title': item.title,
+            'is_completed': item.is_completed,
+            'order': item.order
+        } for item in sorted(checklist_items, key=lambda x: x.order)],
+        'total': total_items,
+        'completed': completed_items,
+        'pending': pending_items,
+        'completion_rate': completion_rate,
+    }
+    
+    user_data = {
+        'full_name': current_user.full_name or 'Usuário',
+        'email': current_user.email,
+        'phone': current_user.phone or 'Não informado',
+    }
+    
+    organization_data = {}
+    if organization:
+        organization_data = {
+            'name': organization.name,
+            'cnpj_cpf': organization.cnpj_cpf or 'N/A',
+            'email': organization.email or 'N/A',
+            'phone': organization.phone or 'N/A',
+            'address': organization.address or 'N/A',
+            'website': organization.website or 'N/A',
+        }
+    
+    # Create reports directory if it doesn't exist
+    reports_dir = os.path.join(os.getcwd(), "uploads", "reports")
+    os.makedirs(reports_dir, exist_ok=True)
+    
+    # Generate unique filename
+    filename = f"parecer_tecnico_{process.protocol.replace('/', '-')}_{uuid.uuid4().hex[:8]}.pdf"
+    output_path = os.path.join(reports_dir, filename)
+    
+    # Generate PDF
+    try:
+        generate_technical_report(
+            process_data=process_data,
+            checklist_data=checklist_data,
+            user_data=user_data,
+            organization_data=organization_data,
+            output_path=output_path
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error generating report: {str(e)}"
+        )
+    
+    # Log audit
+    AuditLogger.log_create(
+        db=db,
+        entity_type="TechnicalReport",
+        entity_id=process.id,
+        user_id=current_user.id,
+        organization_id=org_id,
+        changes={"process_protocol": process.protocol, "filename": filename}
+    )
+    
+    # Return file
+    return FileResponse(
+        path=output_path,
+        media_type="application/pdf",
+        filename=f"Parecer_Tecnico_{process.protocol.replace('/', '-')}.pdf"
+    )

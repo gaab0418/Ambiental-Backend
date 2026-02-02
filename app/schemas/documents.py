@@ -27,6 +27,15 @@ class DocumentCreate(DocumentBase):
     pass
 
 
+class GeneratedDocumentCreate(BaseModel):
+    """Schema for saving a document generated from a template."""
+    name: str = Field(..., max_length=255, description="Nome do documento")
+    category: str = Field(default="GERAL", max_length=100)
+    content: str = Field(..., description="Conteúdo HTML/Markdown do documento gerado")
+    template_id: Optional[int] = Field(None, description="ID do template usado")
+    template_name: Optional[str] = Field(None, description="Nome do template usado")
+
+
 class DocumentUpdate(BaseModel):
     name: Optional[str] = Field(None, max_length=255)
     category: Optional[str] = Field(None, max_length=100)
@@ -57,6 +66,7 @@ class DocumentListResponse(BaseModel):
     total: int
     limit: int
     offset: int
+
 
 
 

@@ -152,6 +152,102 @@ PLACEHOLDER_CATEGORIES: List[PlaceholderCategory] = [
             ),
         ]
     ),
+    PlaceholderCategory(
+        name="Processo",
+        description="Informações sobre o processo ambiental",
+        placeholders=[
+            PlaceholderInfo(
+                name="process.title",
+                description="Título do processo",
+                example="Licença Ambiental - Empresa ABC",
+                category="Processo"
+            ),
+            PlaceholderInfo(
+                name="process.protocol",
+                description="Número do protocolo",
+                example="2025/0001234",
+                category="Processo"
+            ),
+            PlaceholderInfo(
+                name="process.status",
+                description="Status do processo",
+                example="Em Andamento",
+                category="Processo"
+            ),
+            PlaceholderInfo(
+                name="process.priority",
+                description="Prioridade do processo",
+                example="Alta",
+                category="Processo"
+            ),
+            PlaceholderInfo(
+                name="process.responsible",
+                description="Responsável pelo processo",
+                example="João Silva",
+                category="Processo"
+            ),
+            PlaceholderInfo(
+                name="process.location",
+                description="Localização do processo",
+                example="São Paulo - SP",
+                category="Processo"
+            ),
+            PlaceholderInfo(
+                name="process.progress",
+                description="Progresso do processo (%)",
+                example="75",
+                category="Processo"
+            ),
+            PlaceholderInfo(
+                name="process.deadline",
+                description="Prazo do processo",
+                example="31/12/2025",
+                category="Processo"
+            ),
+            PlaceholderInfo(
+                name="process.summary",
+                description="Resumo do processo",
+                example="Licenciamento para atividade industrial",
+                category="Processo"
+            ),
+        ]
+    ),
+    PlaceholderCategory(
+        name="Checklist",
+        description="Informações sobre o checklist de conferência",
+        placeholders=[
+            PlaceholderInfo(
+                name="checklist.total",
+                description="Total de itens no checklist",
+                example="15",
+                category="Checklist"
+            ),
+            PlaceholderInfo(
+                name="checklist.completed",
+                description="Itens completados",
+                example="12",
+                category="Checklist"
+            ),
+            PlaceholderInfo(
+                name="checklist.pending",
+                description="Itens pendentes",
+                example="3",
+                category="Checklist"
+            ),
+            PlaceholderInfo(
+                name="checklist.completion_rate",
+                description="Taxa de conclusão (%)",
+                example="80",
+                category="Checklist"
+            ),
+            PlaceholderInfo(
+                name="checklist.items_list",
+                description="Lista formatada de itens",
+                example="1. [✓] Documento X\n2. [ ] Documento Y",
+                category="Checklist"
+            ),
+        ]
+    ),
 ]
 
 

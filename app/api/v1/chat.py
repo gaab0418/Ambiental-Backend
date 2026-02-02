@@ -11,9 +11,8 @@ from app.models.user import User
 from app.models.chat_thread import ChatThread
 from app.models.chat_message import ChatMessage, MessageRole
 from app.models.chat_file import ChatFile
-from app.models.chat_timeline_event import ChatTimelineEvent, TimelineEventType, TimelineEventStatus
 from app.schemas.chat import (
-    ChatThreadCreate, ChatThreadResponse,
+    ChatThreadCreate, ChatThreadUpdate, ChatThreadResponse,
     ChatMessageCreate, ChatMessageResponse, ChatMessagesResponse,
     N8NCallbackMessage
 )
@@ -29,14 +28,25 @@ router = APIRouter()
 
 @router.get("/threads", response_model=List[ChatThreadResponse])
 async def get_chat_threads(
+    process_code: Optional[str] = Query(None),
+    type: Optional[str] = Query(None),
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
-    """Get all chat threads for the current user."""
-    threads = db.query(ChatThread).filter(
+    """Get all chat threads for the current user, optionally filtered."""
+    query = db.query(ChatThread).filter(
         ChatThread.user_id == current_user.id,
         ChatThread.is_active == True
-    ).order_by(ChatThread.updated_at.desc()).all()
+    )
+    
+    # Apply filters
+    if process_code:
+        query = query.filter(ChatThread.process_code == process_code)
+    
+    if type:
+        query = query.filter(ChatThread.type == type)
+        
+    threads = query.order_by(ChatThread.updated_at.desc()).all()
     
     # Enrich with aggregated data
     result = []
@@ -53,9 +63,11 @@ async def get_chat_threads(
                 ChatFile.thread_id == thread.id,
                 ChatFile.is_active == True
             ).count(),
-            "has_timeline": db.query(ChatTimelineEvent).filter(
-                ChatTimelineEvent.thread_id == thread.id
-            ).count() > 0
+            "process_code": thread.process_code,
+            "process_id": thread.process_id,
+            "law_id": thread.law_id,
+            "type": thread.type,
+            "has_timeline": False  # Deprecated
         }
         result.append(thread_dict)
     
@@ -93,7 +105,12 @@ async def create_chat_thread(
         user_id=current_user.id,
         organization_id=user_assoc.organization_id,
         title=thread_data.title or "New Chat",
-        is_active=True
+        is_active=True,
+        # Context
+        type=thread_data.type or "general",
+        process_code=thread_data.process_code,
+        process_id=thread_data.process_id,
+        law_id=thread_data.law_id
     )
     
     db.add(thread)
@@ -223,18 +240,7 @@ async def send_chat_message(
         ChatFile.is_active == True
     ).all()
     
-    # Create timeline event for AI processing
-    timeline_event = ChatTimelineEvent(
-        thread_id=thread_id,
-        organization_id=user_assoc.organization_id,
-        type=TimelineEventType.AI_PROCESSING,
-        status=TimelineEventStatus.IN_PROGRESS,
-        title="Processando mensagem",
-        description="Enviando para o assistente virtual..."
-    )
-    db.add(timeline_event)
-    db.commit()
-    
+    # Call N8N Webhook Synchronously
     # Call N8N Webhook Synchronously
     try:
         # Prepare simple payload as requested
@@ -247,20 +253,45 @@ async def send_chat_message(
         # We use a new client here to ensure we don't have async issues if running in a sync context, 
         # but since this is an async path, we should use AsyncClient
         webhook_url = f"{settings.n8n_webhook_url.rstrip('/')}/chat"
-        async with httpx.AsyncClient(timeout=60.0) as client:
+        async with httpx.AsyncClient(timeout=90.0) as client:
             response = await client.post(
                 webhook_url,
                 json=payload
             )
-            response.raise_for_status()
-            response_data = response.json()
             
-        # Extract output
-        assistant_text = response_data.get("output", "")
+        # Handle response
+        assistant_text = ""
         
+        if response.status_code == 200:
+            try:
+                response_data = response.json()
+                
+                # Handle if response is a list (common in n8n)
+                if isinstance(response_data, list):
+                    if response_data:
+                        # Extract first item if it's a list
+                        first_item = response_data[0]
+                        if isinstance(first_item, dict):
+                            assistant_text = first_item.get("output", "")
+                        else:
+                             # Or maybe the list itself is strings? Less likely for n8n webhook but possible
+                            logger.warning(f"N8N returned list but item is not dict: {first_item}")
+                    else:
+                        response_data = {}
+                elif isinstance(response_data, dict):
+                    assistant_text = response_data.get("output", "")
+                
+                if not assistant_text:
+                    logger.warning(f"N8N response missing 'output' field. Data: {response_data}")
+                    
+            except Exception as json_err:
+                logger.error(f"Failed to parse N8N response JSON: {str(json_err)}. Body: {response.text}")
+        else:
+            logger.error(f"N8N returned status {response.status_code}: {response.text}")
+        
+        # Fallback message if something went wrong
         if not assistant_text:
-            logger.warning(f"N8N response missing 'output' field: {response_data}")
-            assistant_text = "Desculpe, não consegui processar sua resposta."
+            assistant_text = "Desculpe, estou com dificuldades para processar sua solicitação no momento. Por favor, tente novamente."
 
         # Create assistant message
         assistant_message = ChatMessage(
@@ -342,6 +373,72 @@ async def delete_chat_thread(
     return {"message": "Chat thread deleted successfully"}
 
 
+@router.patch("/threads/{thread_id}", response_model=ChatThreadResponse)
+async def update_chat_thread(
+    thread_id: int,
+    update_data: ChatThreadUpdate,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """Update a chat thread (e.g., update title)."""
+    
+    # Check if thread exists and belongs to user
+    thread = db.query(ChatThread).filter(
+        ChatThread.id == thread_id,
+        ChatThread.user_id == current_user.id
+    ).first()
+    
+    if not thread:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Chat thread not found"
+        )
+    
+    # Update title - schema already validates min/max length
+    old_title = thread.title
+    thread.title = update_data.title.strip()
+    changes = {"title": {"old": old_title, "new": thread.title}}
+    thread.updated_at = datetime.now(timezone.utc)
+    
+    db.commit()
+    db.refresh(thread)
+    
+    # Get user's organization for audit
+    user_assoc = db.query(UserOrganizationAssociation).filter(
+        UserOrganizationAssociation.user_id == current_user.id
+    ).first()
+    
+    # Log audit
+    AuditLogger.log_update(
+        db=db,
+        entity_type="ChatThread",
+        entity_id=thread.id,
+        user_id=current_user.id,
+        organization_id=user_assoc.organization_id if user_assoc else None,
+        changes=changes
+    )
+    
+    # Return enriched thread data
+    return {
+        "id": thread.id,
+        "user_id": thread.user_id,
+        "organization_id": thread.organization_id,
+        "title": thread.title,
+        "is_active": thread.is_active,
+        "created_at": thread.created_at,
+        "updated_at": thread.updated_at,
+        "files_count": db.query(ChatFile).filter(
+            ChatFile.thread_id == thread.id,
+            ChatFile.is_active == True
+        ).count(),
+        "has_timeline": False,  # Deprecated
+        "type": thread.type,
+        "process_code": thread.process_code,
+        "process_id": thread.process_id,
+        "law_id": thread.law_id
+    }
+
+
 @router.post("/threads/{thread_id}/messages/callback")
 async def n8n_message_callback(
     thread_id: int,
@@ -397,32 +494,7 @@ async def n8n_message_callback(
         changes={"role": "ASSISTANT", "thread_id": thread_id, "source": "n8n_callback"}
     )
     
-    # Update or complete AI processing timeline event if it exists
-    processing_event = db.query(ChatTimelineEvent).filter(
-        ChatTimelineEvent.thread_id == thread_id,
-        ChatTimelineEvent.type == TimelineEventType.AI_PROCESSING,
-        ChatTimelineEvent.status == TimelineEventStatus.IN_PROGRESS
-    ).order_by(ChatTimelineEvent.created_at.desc()).first()
-    
-    if processing_event:
-        processing_event.status = TimelineEventStatus.COMPLETED
-        processing_event.title = "Resposta da IA recebida"
-        processing_event.description = "Processamento concluído com sucesso"
-    
-    # Create timeline events if provided
-    if callback_data.timeline_events:
-        for event_data in callback_data.timeline_events:
-            timeline_event = ChatTimelineEvent(
-                thread_id=thread_id,
-                organization_id=thread.organization_id,
-                type=TimelineEventType[event_data.type.upper()],
-                status=TimelineEventStatus[event_data.status.upper()],
-                title=event_data.title,
-                description=event_data.description,
-                order_index=event_data.order_index,
-                event_metadata=event_data.metadata
-            )
-            db.add(timeline_event)
+    # Timeline events processing removed (deprecated)
     
     # Update thread timestamp
     thread.updated_at = datetime.now(timezone.utc)

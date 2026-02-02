@@ -5,6 +5,14 @@ from datetime import datetime
 
 class ChatThreadCreate(BaseModel):
     title: Optional[str] = Field(None, max_length=120)
+    type: Optional[str] = Field("general", description="Chat type: general, process, legislation")
+    process_code: Optional[str] = None
+    process_id: Optional[int] = None
+    law_id: Optional[int] = None
+
+
+class ChatThreadUpdate(BaseModel):
+    title: str = Field(..., min_length=1, max_length=120)
 
 
 class ChatThreadResponse(BaseModel):
@@ -19,6 +27,12 @@ class ChatThreadResponse(BaseModel):
     updated_at: datetime
     files_count: Optional[int] = 0
     has_timeline: Optional[bool] = False
+    
+    # Context
+    type: str
+    process_code: Optional[str]
+    process_id: Optional[int]
+    law_id: Optional[int]
 
 
 class ChatMessageCreate(BaseModel):
