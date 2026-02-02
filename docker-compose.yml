@@ -1,0 +1,16 @@
+services:
+    database:
+        image: postgres:${DB_VERSION:-15-alpine}
+        container_name: dev-postgres-backend-ambiental-master
+        restart: always
+        environment:
+            POSTGRES_USER: ${DOCKER_USER:-postgres}
+            POSTGRES_PASSWORD: ${DOCKER_PASSWORD:-postgres}
+            POSTGRES_DB: ${DOCKER_DB:-postgres}
+        ports:
+            - '${DB_PORT:-5432}:5432' # [máquina] : [Docker]
+        volumes:
+            - pgdata:/var/lib/postgresql/data
+
+volumes:
+    pgdata:
