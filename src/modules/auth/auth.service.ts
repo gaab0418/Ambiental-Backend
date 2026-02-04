@@ -36,7 +36,7 @@ export class AuthService {
 	async validateUser(email: string, password: string): Promise<User | null> {
 		const user = await this.usersService.findByEmail(email);
 		if (!user) {
-			return null;
+			throw new UnauthorizedException('Email não encontrado');
 		}
 
 		const isPasswordValid = await this.comparePasswords(
@@ -44,7 +44,7 @@ export class AuthService {
 			user.password,
 		);
 		if (!isPasswordValid) {
-			return null;
+			throw new UnauthorizedException('Senha inválida');
 		}
 
 		if (!user.isActive) {
