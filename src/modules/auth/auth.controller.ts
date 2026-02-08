@@ -6,6 +6,7 @@ import {
 	UseGuards,
 	HttpCode,
 	HttpStatus,
+	UnauthorizedException,
 } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
@@ -19,6 +20,8 @@ import {
 	ApiResponse,
 	ApiUnauthorizedResponse,
 	ApiConflictResponse,
+	ApiSecurity,
+	ApiBearerAuth,
 } from '@nestjs/swagger';
 
 @Controller('auth')
@@ -43,6 +46,37 @@ export class AuthController {
 		return this.authService.login(user);
 	}
 
+	/**
+	 * Endpoint especial para o OAuth2 password flow do Swagger UI.
+	 * Recebe username/password como form-data e retorna access_token no formato OAuth2.
+	 */
+	@ApiResponse({ status: 200, description: 'Login via Swagger OAuth2' })
+	@ApiUnauthorizedResponse({ description: 'Credenciais inválidas' })
+	@Post('swagger-login')
+	@HttpCode(HttpStatus.OK)
+	async swaggerLogin(
+		@Body()
+		body: {
+			username: string;
+			password: string;
+			grant_type?: string;
+		},
+	) {
+		const user = await this.authService.validateUser(
+			body.username,
+			body.password,
+		);
+		if (!user) {
+			throw new UnauthorizedException('Credenciais inválidas');
+		}
+		const tokens = await this.authService.login(user);
+		return {
+			access_token: tokens.access_token,
+			token_type: 'bearer',
+			refresh_token: tokens.refresh_token,
+		};
+	}
+
 	@ApiResponse({
 		status: 200,
 		description: 'Refresh token realizado com sucesso',
@@ -63,6 +97,8 @@ export class AuthController {
 		return this.authService.logout(dto.refreshToken);
 	}
 
+	@ApiBearerAuth('JWT-auth')
+	@ApiSecurity('OAuth2-login')
 	@ApiResponse({ status: 200, description: 'Logout realizado com sucesso' })
 	@UseGuards(JwtAuthGuard)
 	@Post('logout-all')
@@ -75,6 +111,8 @@ export class AuthController {
 	@ApiUnauthorizedResponse({
 		description: 'Token JWT inválido/revogado/expirado',
 	})
+	@ApiBearerAuth('JWT-auth')
+	@ApiSecurity('OAuth2-login')
 	@UseGuards(JwtAuthGuard)
 	@Get('me')
 	async me(@CurrentUser() user: User) {

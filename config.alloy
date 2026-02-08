@@ -1,0 +1,57 @@
+// ==============================================================================
+// ALLOY CONFIGURATION - Enterprise Grade
+// ==============================================================================
+
+logging {
+    level  = "info"
+    format = "logfmt"
+}
+
+// 1. Receiver HTTP para logs do NestJS (Push Model)
+loki.source.api "nestjs_receiver" {
+    http {
+        listen_address = "0.0.0.0"
+        listen_port    = 3101
+    }
+    
+    forward_to = [loki.process.add_labels.receiver]
+}
+
+// 2. Processamento: adicionar labels padrão
+loki.process "add_labels" {
+    stage.static_labels {
+        values = {
+            source = "http-push",
+        }
+    }
+    
+    // Extrair level do JSON se presente
+    stage.json {
+        expressions = {
+            level = "level",
+            msg   = "msg",
+        }
+    }
+    
+    stage.labels {
+        values = {
+            level = "",
+        }
+    }
+    
+    forward_to = [loki.write.local_loki.receiver]
+}
+
+// 3. Envio para Loki com retry e batching
+loki.write "local_loki" {
+    endpoint {
+        url = "http://loki:3100/loki/api/v1/push"
+        
+        // Retry empresarial
+        retry_on_http_429 = true
+    }
+    
+    external_labels = {
+        cluster = "local",
+    }
+}

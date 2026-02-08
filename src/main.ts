@@ -7,6 +7,8 @@ import {
 } from '@nestjs/platform-fastify';
 import { ConfigService } from '@nestjs/config';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import { Logger } from 'nestjs-pino';
+import { GLOBAL_PREFIX } from './shared/constants/constants';
 
 async function bootstrap() {
 	const app = await NestFactory.create<NestFastifyApplication>(
@@ -15,11 +17,33 @@ async function bootstrap() {
 	);
 
 	const config = new DocumentBuilder()
-		.setTitle('Ambiental API')
-		.setDescription('Ambiental API - Master')
+		.setTitle('Ambiental API - Core License Server')
+		.setDescription('Ambiental API - Core License Server')
 		.setVersion('1.0')
-		.addTag('Ambiental')
-		.addBearerAuth()
+		.addBearerAuth(
+			{
+				type: 'http',
+				scheme: 'bearer',
+				bearerFormat: 'JWT',
+				name: 'Authorization',
+				description: 'Insira o token JWT manualmente',
+				in: 'header',
+			},
+			'JWT-auth',
+		)
+		.addOAuth2(
+			{
+				type: 'oauth2',
+				flows: {
+					password: {
+						tokenUrl: `auth/swagger-login`,
+						scopes: {},
+					},
+				},
+				description: 'Login com email e senha',
+			},
+			'OAuth2-login',
+		)
 		.build();
 
 	const configService = app.get(ConfigService);
@@ -37,7 +61,8 @@ async function bootstrap() {
 		});
 	}
 
-	app.setGlobalPrefix('api/v1');
+	app.setGlobalPrefix(GLOBAL_PREFIX);
+	app.useLogger(app.get(Logger));
 
 	app.useGlobalPipes(
 		new ValidationPipe({
