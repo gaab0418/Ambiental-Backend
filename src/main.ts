@@ -9,6 +9,18 @@ import { ConfigService } from '@nestjs/config';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { Logger } from 'nestjs-pino';
 import { GLOBAL_PREFIX } from './shared/constants/constants';
+import { execSync } from 'child_process';
+
+// Forca UTF-8 no console do Windows para suportar acentos corretamente.
+if (process.platform === 'win32') {
+	try {
+		execSync('chcp 65001', { stdio: 'ignore' });
+	} catch {
+		console.warn(
+			'Nao foi possivel alterar o encoding do console para UTF-8',
+		);
+	}
+}
 
 async function bootstrap() {
 	const app = await NestFactory.create<NestFastifyApplication>(

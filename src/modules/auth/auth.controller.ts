@@ -22,9 +22,11 @@ import {
 	ApiConflictResponse,
 	ApiSecurity,
 	ApiBearerAuth,
+	ApiTags,
 } from '@nestjs/swagger';
 
 @Controller('auth')
+@ApiTags('Autenticação')
 export class AuthController {
 	constructor(private readonly authService: AuthService) {}
 

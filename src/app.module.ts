@@ -1,10 +1,10 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
+import { ScheduleModule } from '@nestjs/schedule';
 import { PrismaModule } from './shared/prisma/prisma.module';
 import { UsersModule } from './modules/users/users.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { LicenseModule } from './core/license/license.module';
-import { LicenseService } from './core/license/license.service';
 import { LoggerModule } from 'nestjs-pino';
 
 @Module({
@@ -13,6 +13,7 @@ import { LoggerModule } from 'nestjs-pino';
 			isGlobal: true,
 			envFilePath: '.env',
 		}),
+		ScheduleModule.forRoot(),
 		LoggerModule.forRoot({
 			pinoHttp: {
 				redact: {
@@ -62,6 +63,6 @@ import { LoggerModule } from 'nestjs-pino';
 		LicenseModule,
 	],
 	controllers: [],
-	providers: [LicenseService],
+	providers: [],
 })
 export class AppModule {}
