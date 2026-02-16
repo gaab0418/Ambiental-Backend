@@ -24,9 +24,11 @@ import {
 	ApiBearerAuth,
 	ApiTags,
 } from '@nestjs/swagger';
+import { LicenseGuard } from '../license/license.guard';
 
 @Controller('auth')
 @ApiTags('Autenticação')
+@UseGuards(LicenseGuard)
 export class AuthController {
 	constructor(private readonly authService: AuthService) {}
 
