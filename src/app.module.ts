@@ -6,6 +6,8 @@ import { UsersModule } from './modules/users/users.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { LicenseModule } from './modules/license/license.module';
 import { LoggerModule } from 'nestjs-pino';
+import { AppController } from './app.controller';
+import { AppService } from './app.service';
 
 @Module({
 	imports: [
@@ -62,7 +64,7 @@ import { LoggerModule } from 'nestjs-pino';
 		AuthModule,
 		LicenseModule,
 	],
-	controllers: [],
-	providers: [],
+	controllers: [AppController],
+	providers: [AppService],
 })
 export class AppModule {}
