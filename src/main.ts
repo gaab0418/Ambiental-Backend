@@ -29,8 +29,8 @@ async function bootstrap() {
 	);
 
 	const config = new DocumentBuilder()
-		.setTitle('Ambiental API - Core License Server')
-		.setDescription('Ambiental API - Core License Server')
+		.setTitle('Ambiental API - On-Premise Server')
+		.setDescription('Ambiental API - On-Premise Server')
 		.setVersion('1.0')
 		.addBearerAuth(
 			{
