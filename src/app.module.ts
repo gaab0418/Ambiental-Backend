@@ -4,7 +4,7 @@ import { ScheduleModule } from '@nestjs/schedule';
 import { PrismaModule } from './shared/prisma/prisma.module';
 import { UsersModule } from './modules/users/users.module';
 import { AuthModule } from './modules/auth/auth.module';
-import { LicenseModule } from './core/license/license.module';
+import { LicenseModule } from './modules/license/license.module';
 import { LoggerModule } from 'nestjs-pino';
 
 @Module({
