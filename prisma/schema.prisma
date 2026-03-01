@@ -12,22 +12,40 @@ datasource db {
   provider = "postgresql"
 }
 
-// Models Usados no Projeto
+// ─── Enums ───────────────────────────────────────────────────────────────────
 enum Role {
   USER
   ADMIN
 }
 
+enum ProcessStatus {
+  DRAFT
+  IN_PROGRESS
+  COMPLETED
+  ARCHIVED
+}
+
+enum MessageRole {
+  USER
+  ASSISTANT
+  SYSTEM
+}
+
+// ─── Models ──────────────────────────────────────────────────────────────────
 model User {
-  id            String         @id @default(uuid())
-  email         String         @unique
-  name          String?
-  password      String
-  role          Role           @default(USER)
-  createdAt     DateTime       @default(now())
-  updatedAt     DateTime       @updatedAt
-  isActive      Boolean        @default(true)
-  refreshTokens RefreshToken[]
+  id              String           @id @default(uuid())
+  email           String           @unique
+  name            String?
+  password        String
+  role            Role             @default(USER)
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  isActive        Boolean          @default(true)
+  refreshTokens   RefreshToken[]
+  processes       Process[]
+  chats           Chat[]
+  messages        Message[]
+  chatAttachments ChatAttachment[]
 
   @@map("users")
 }
@@ -42,4 +60,97 @@ model RefreshToken {
   isRevoked Boolean  @default(false)
 
   @@map("refresh_tokens")
+}
+
+// ─── Processos Ambientais ────────────────────────────────────────────────────
+model Process {
+  id          String           @id @default(uuid())
+  title       String
+  description String?
+  status      ProcessStatus    @default(DRAFT)
+  currentStep Int              @default(0)
+  metadata    Json?            @db.JsonB
+  userId      String
+  user        User             @relation(fields: [userId], references: [id])
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+  deletedAt   DateTime?
+  checklists  ProcessChecklist[]
+  chats       Chat[]
+  attachments ChatAttachment[]
+
+  @@index([userId])
+  @@map("processes")
+}
+
+model ProcessChecklist {
+  id          String    @id @default(uuid())
+  title       String
+  description String?
+  order       Int       @default(0)
+  isCompleted Boolean   @default(false)
+  completedAt DateTime?
+  processId   String
+  process     Process   @relation(fields: [processId], references: [id], onDelete: Cascade)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([processId])
+  @@map("process_checklists")
+}
+
+// ─── Chat ────────────────────────────────────────────────────────────────────
+model Chat {
+  id          String           @id @default(uuid())
+  title       String
+  userId      String
+  user        User             @relation(fields: [userId], references: [id])
+  processId   String?
+  process     Process?         @relation(fields: [processId], references: [id])
+  isArchived  Boolean          @default(false)
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+  deletedAt   DateTime?
+  messages    Message[]
+  attachments ChatAttachment[]
+
+  @@index([userId])
+  @@index([processId])
+  @@map("chats")
+}
+
+model Message {
+  id        String      @id @default(uuid())
+  content   String
+  role      MessageRole @default(USER)
+  chatId    String
+  chat      Chat        @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  userId    String?
+  user      User?       @relation(fields: [userId], references: [id])
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+  deletedAt DateTime?
+
+  @@index([chatId])
+  @@map("messages")
+}
+
+model ChatAttachment {
+  id           String    @id @default(uuid())
+  originalName String
+  storagePath  String
+  mimeType     String
+  sizeBytes    Int
+  chatId       String
+  chat         Chat      @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  processId    String?
+  process      Process?  @relation(fields: [processId], references: [id])
+  uploadedById String
+  uploadedBy   User      @relation(fields: [uploadedById], references: [id])
+  createdAt    DateTime  @default(now())
+  deletedAt    DateTime?
+
+  @@index([chatId])
+  @@index([processId])
+  @@map("chat_attachments")
 }

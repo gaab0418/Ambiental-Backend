@@ -28,6 +28,18 @@ async function bootstrap() {
 		new FastifyAdapter(),
 	);
 
+	// Registrar plugin de multipart para upload de arquivos
+	await app.register(
+		// eslint-disable-next-line @typescript-eslint/no-require-imports
+		require('@fastify/multipart'),
+		{
+			limits: {
+				fileSize:
+					1024 * 1024 * (Number(process.env.MAX_FILE_SIZE) || 50), // 50MB
+			},
+		},
+	);
+
 	const config = new DocumentBuilder()
 		.setTitle('Ambiental API - On-Premise Server')
 		.setDescription('Ambiental API - On-Premise Server')

@@ -2,9 +2,14 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { ScheduleModule } from '@nestjs/schedule';
 import { PrismaModule } from './shared/prisma/prisma.module';
+import { StorageModule } from './shared/storage/storage.module';
 import { UsersModule } from './modules/users/users.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { LicenseModule } from './modules/license/license.module';
+import { ProcessModule } from './modules/process/process.module';
+import { ChatModule } from './modules/chat/chat.module';
+import { MessageModule } from './modules/message/message.module';
+import { ChatUploadModule } from './modules/chat-upload/chat-upload.module';
 import { LoggerModule } from 'nestjs-pino';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
@@ -60,9 +65,14 @@ import { AppService } from './app.service';
 			},
 		}),
 		PrismaModule,
+		StorageModule,
 		UsersModule,
 		AuthModule,
 		LicenseModule,
+		ProcessModule,
+		ChatModule,
+		MessageModule,
+		ChatUploadModule,
 	],
 	controllers: [AppController],
 	providers: [AppService],
